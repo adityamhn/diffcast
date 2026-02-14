@@ -32,6 +32,7 @@ commits/{commitId}
   - files: [{ path, status, additions, deletions, patch }]
   - diff_summary: str | null  # Human-readable (Gemini later)
   - feature_demo_status: str | null  # queued, running, completed, failed
+  - feature_demo_goal: str | null  # Goal text used for recording
   - feature_demo_video_url: str | null  # Blob storage URL of recorded demo
   - feature_demo_error: str | null
   - created_at: timestamp

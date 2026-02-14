@@ -86,13 +86,20 @@ export default async function RepoPage({ params }) {
             {commits.map((commit) => (
               <article key={commit.id} className={styles.commitCard}>
                 <div className={styles.commitHeader}>
+                  <Link
+                    href={`/repos/${owner}/${repo}/commit/${commit.sha}`}
+                    className={styles.sha}
+                  >
+                    {commit.sha_short}
+                  </Link>
                   <a
                     href={`https://github.com/${repoPath}/commit/${commit.sha}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={styles.sha}
+                    className={styles.ghLink}
+                    title="View on GitHub"
                   >
-                    {commit.sha_short}
+                    ↗
                   </a>
                   <span className={styles.branchTag}>{commit.branch}</span>
                   <SyncCommitButton

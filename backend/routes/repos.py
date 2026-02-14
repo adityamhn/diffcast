@@ -4,7 +4,8 @@ import re
 
 from flask import Blueprint, request, jsonify
 
-from services import list_repos, list_commits, get_repo, register_repo, update_repo_website_url
+from firebase_schema import commit_id
+from services import list_repos, list_commits, get_commit_by_id, get_repo, register_repo, update_repo_website_url
 
 
 def _parse_github_url(url: str) -> tuple[str, str] | None:
@@ -100,6 +101,18 @@ def register():
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@repos_bp.route("/<path:repo_path>/commits/<sha>", methods=["GET"])
+def get_commit(repo_path: str, sha: str):
+    """Get a single commit by owner/repo and sha (short or full)."""
+    if "/" not in repo_path:
+        return jsonify({"error": "Use owner/repo format"}), 400
+    cid = commit_id(repo_path, sha)
+    commit = get_commit_by_id(cid)
+    if not commit:
+        return jsonify({"error": "Commit not found"}), 404
+    return jsonify(commit)
 
 
 @repos_bp.route("/<path:repo_path>/commits", methods=["GET"])

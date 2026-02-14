@@ -254,6 +254,7 @@ def update_commit_feature_demo(
     status: str,
     video_url: Optional[str] = None,
     error: Optional[str] = None,
+    goal: Optional[str] = None,
 ) -> None:
     """Update commit document with feature demo pipeline result."""
     db = _get_db()
@@ -263,6 +264,8 @@ def update_commit_feature_demo(
         "feature_demo_video_url": video_url,
         "feature_demo_error": error,
     }
+    if goal is not None:
+        payload["feature_demo_goal"] = goal
     ref.set(payload, merge=True)
 
 

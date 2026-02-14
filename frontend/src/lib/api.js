@@ -58,3 +58,41 @@ export async function triggerFeatureDemo(owner, repo, sha, force = false) {
   }
   return res.json();
 }
+
+export async function getCommit(owner, repo, sha) {
+  const res = await fetch(`${API_URL}/api/repos/${owner}/${repo}/commits/${sha}`);
+  if (!res.ok) throw new Error("Failed to fetch commit");
+  return res.json();
+}
+
+export async function getVideo(videoId) {
+  const res = await fetch(`${API_URL}/api/videos/${videoId}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function triggerCommitPipeline(owner, repo, sha, languages = ["en"], force = false) {
+  const res = await fetch(`${API_URL}/api/pipeline/commit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ owner, repo, sha, languages, force }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Pipeline failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getBrowserUseGoal(owner, repo, sha) {
+  const res = await fetch(`${API_URL}/api/pipeline/browser-use-goal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ owner, repo, sha }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to get goal: ${res.status}`);
+  }
+  return res.json();
+}

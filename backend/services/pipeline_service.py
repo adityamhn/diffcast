@@ -384,6 +384,7 @@ def _run_feature_demo_pipeline(commit_doc_id: str) -> None:
             status="completed",
             video_url=video_url,
             error=None,
+            goal=goal,
         )
         logger.info(
             "Feature demo completed commit_id=%s video_url=%s",
