@@ -9,6 +9,11 @@ import {
   triggerFeatureDemo,
   triggerCommitPipeline,
   getBrowserUseGoal,
+  testGoalPhase,
+  testDemoPhase,
+  testScriptPhase,
+  testSnapshotsPhase,
+  testVeoPhase,
 } from "@/lib/api";
 import { CommitChat } from "./CommitChat";
 import styles from "./CommitPageContent.module.css";
@@ -33,6 +38,15 @@ export function CommitPageContent({
   const [recordingDemo, setRecordingDemo] = useState(false);
   const [generatingVideo, setGeneratingVideo] = useState(false);
   const [error, setError] = useState(null);
+
+  // Test phase states
+  const [testingGoal, setTestingGoal] = useState(false);
+  const [testingDemo, setTestingDemo] = useState(false);
+  const [testingScript, setTestingScript] = useState(false);
+  const [testingSnapshots, setTestingSnapshots] = useState(false);
+  const [testingVeo, setTestingVeo] = useState(false);
+  const [testResults, setTestResults] = useState(null);
+  const [showTestPanel, setShowTestPanel] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -115,6 +129,99 @@ export function CommitPageContent({
     }
   };
 
+  // Test phase handlers
+  const handleTestGoal = async () => {
+    setTestingGoal(true);
+    setError(null);
+    setTestResults(null);
+    try {
+      const res = await testGoalPhase(owner, repo, sha);
+      setTestResults({ phase: "goal", ...res });
+      if (res.goal) setGoal(res.goal);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTestingGoal(false);
+    }
+  };
+
+  const handleTestDemo = async () => {
+    setTestingDemo(true);
+    setError(null);
+    setTestResults(null);
+    try {
+      const res = await testDemoPhase(owner, repo, sha);
+      setTestResults({ phase: "demo", ...res });
+      await fetchData();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTestingDemo(false);
+    }
+  };
+
+  const handleTestScript = async () => {
+    setTestingScript(true);
+    setError(null);
+    setTestResults(null);
+    try {
+      const demoDuration = video?.demo_video_duration_sec || 10;
+      const res = await testScriptPhase(owner, repo, sha, demoDuration);
+      setTestResults({ phase: "script", ...res });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTestingScript(false);
+    }
+  };
+
+  const handleTestSnapshots = async () => {
+    const videoUrl = commit?.feature_demo_video_url || video?.demo_video_url;
+    if (!videoUrl) {
+      setError("No demo video URL available. Record a demo first.");
+      return;
+    }
+    setTestingSnapshots(true);
+    setError(null);
+    setTestResults(null);
+    try {
+      const res = await testSnapshotsPhase(videoUrl);
+      setTestResults({ phase: "snapshots", ...res });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTestingSnapshots(false);
+    }
+  };
+
+  const handleTestVeo = async () => {
+    // Use the first clip prompt from the shot plan if available
+    // testResults from script phase has clip_prompts directly, video might have shot_plan nested
+    const clipPrompts = testResults?.clip_prompts || video?.shot_plan?.clip_prompts;
+    const clipPrompt = clipPrompts?.[0]?.prompt;
+
+    // Fallback prompt for testing without running script phase first
+    const fallbackPrompt = `Photorealistic product demo of a modern web application displayed on a desktop monitor. 
+The screen shows a clean, professional UI with interactive elements. A realistic mouse cursor moves smoothly 
+across the interface, clicking buttons and navigating through the application. The camera holds a steady 
+front-on view of the monitor with soft neutral studio lighting. Style: photorealistic cinematic product demo, 
+16:9, 4K, clean modern interface, responsive UI, cinematic clarity.`;
+
+    const promptToUse = clipPrompt || fallbackPrompt;
+
+    setTestingVeo(true);
+    setError(null);
+    setTestResults(null);
+    try {
+      const res = await testVeoPhase(promptToUse, null, 6);
+      setTestResults({ phase: "veo", used_fallback_prompt: !clipPrompt, ...res });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTestingVeo(false);
+    }
+  };
+
   const demoStatus = commit?.feature_demo_status;
   const videoStatus = video?.status;
   const videoStage = video?.stage;
@@ -123,17 +230,28 @@ export function CommitPageContent({
 
   const progressPercent = () => {
     if (isVideoRunning && videoStage) {
-      const stages = ["script", "video", "voiceover", "captions", "upload", "done"];
+      const stages = ["goal", "demo", "script", "snapshots", "veo", "stitch", "voice", "finalize", "done"];
       const idx = stages.indexOf(videoStage);
       if (idx >= 0) return Math.round(((idx + 1) / stages.length) * 100);
     }
-    if (isDemoRunning) return 50;
+    if (isDemoRunning) return 25;
     return 0;
   };
 
   const script = video?.script;
+  const shotPlan = video?.shot_plan;
+  const clipPrompts = shotPlan?.clip_prompts ?? [];
   const primaryTrack = video?.tracks?.en || (video?.tracks && Object.values(video.tracks)[0]);
   const featureReleaseUrl = primaryTrack?.final_video_url || video?.base_video_url;
+
+  // Log Veo prompts to console when video data is available
+  useEffect(() => {
+    if (clipPrompts?.length > 0) {
+      clipPrompts.forEach((cp, i) => {
+        console.log(`[Veo] Clip ${i + 1} (${cp.role || "unknown"}):`, cp.prompt);
+      });
+    }
+  }, [clipPrompts]);
 
   return (
     <div className={styles.layout}>
@@ -166,6 +284,15 @@ export function CommitPageContent({
       <div className={styles.actions}>
         <button
           type="button"
+          onClick={handleGenerateVideo}
+          disabled={generatingVideo}
+          className={styles.btnFullFlow}
+          title="Runs the complete pipeline: goal → demo → script → snapshots → Veo → stitch → voice → captions → final video"
+        >
+          {generatingVideo ? "Starting full flow…" : "Generate full flow"}
+        </button>
+        <button
+          type="button"
           onClick={handleSync}
           disabled={syncing}
           className={styles.btn}
@@ -182,13 +309,104 @@ export function CommitPageContent({
         </button>
         <button
           type="button"
-          onClick={handleGenerateVideo}
-          disabled={generatingVideo}
-          className={styles.btnPrimary}
+          onClick={() => setShowTestPanel(!showTestPanel)}
+          className={styles.btnSecondary}
         >
-          {generatingVideo ? "Starting…" : "Generate feature video"}
+          {showTestPanel ? "Hide Test Panel" : "Show Test Panel"}
         </button>
       </div>
+
+      {showTestPanel && (
+        <section className={styles.testPanel}>
+          <h2 className={styles.sectionTitle}>Pipeline Test Panel</h2>
+          <p className={styles.testDescription}>
+            Test each phase of the pipeline individually. Phases run in order:
+            Goal → Demo → Script → Snapshots → Veo → Stitch → Voice → Captions → Finalize
+          </p>
+
+          <div className={styles.testActions}>
+            <div className={styles.testPhase}>
+              <span className={styles.phaseNumber}>1</span>
+              <button
+                type="button"
+                onClick={handleTestGoal}
+                disabled={testingGoal}
+                className={styles.btnTest}
+              >
+                {testingGoal ? "Testing…" : "Test Goal"}
+              </button>
+              <span className={styles.phaseDesc}>Generate browser-use goal from diff</span>
+            </div>
+
+            <div className={styles.testPhase}>
+              <span className={styles.phaseNumber}>2</span>
+              <button
+                type="button"
+                onClick={handleTestDemo}
+                disabled={testingDemo}
+                className={styles.btnTest}
+              >
+                {testingDemo ? "Testing…" : "Test Demo"}
+              </button>
+              <span className={styles.phaseDesc}>Record demo video with browser-use</span>
+            </div>
+
+            <div className={styles.testPhase}>
+              <span className={styles.phaseNumber}>3</span>
+              <button
+                type="button"
+                onClick={handleTestScript}
+                disabled={testingScript}
+                className={styles.btnTest}
+              >
+                {testingScript ? "Testing…" : "Test Script"}
+              </button>
+              <span className={styles.phaseDesc}>Generate scene script + 2 clip prompts</span>
+            </div>
+
+            <div className={styles.testPhase}>
+              <span className={styles.phaseNumber}>4</span>
+              <button
+                type="button"
+                onClick={handleTestSnapshots}
+                disabled={testingSnapshots || !commit?.feature_demo_video_url}
+                className={styles.btnTest}
+              >
+                {testingSnapshots ? "Testing…" : "Test Snapshots"}
+              </button>
+              <span className={styles.phaseDesc}>Extract 2 frames from demo video</span>
+            </div>
+
+            <div className={styles.testPhase}>
+              <span className={styles.phaseNumber}>5</span>
+              <button
+                type="button"
+                onClick={handleTestVeo}
+                disabled={testingVeo}
+                className={styles.btnTest}
+              >
+                {testingVeo ? "Testing…" : "Test Veo"}
+              </button>
+              <span className={styles.phaseDesc}>Generate Veo clip (uses script prompt or fallback)</span>
+            </div>
+
+            <div className={styles.testPhase}>
+              <span className={styles.phaseNumber}>6-10</span>
+              <span className={styles.phaseDisabled}>Stitch, Voice, Captions, Finalize</span>
+              <span className={styles.phaseDesc}>Run full pipeline for remaining phases</span>
+            </div>
+          </div>
+
+          {testResults && (
+            <div className={styles.testResults}>
+              <h3>Test Results: {testResults.phase}</h3>
+              <pre className={styles.testResultsCode}>
+                {JSON.stringify(testResults, null, 2)}
+              </pre>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className={styles.section}>
         <h2 className={styles.sectionTitle}>Demo goal</h2>
@@ -278,6 +496,49 @@ export function CommitPageContent({
                 </li>
               ))}
             </ol>
+          </div>
+        </section>
+      )}
+
+      {(shotPlan || video?.goal) && (
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Pipeline data</h2>
+          <div className={styles.pipelineData}>
+            {video?.goal && (
+              <div className={styles.pipelineBlock}>
+                <h3 className={styles.pipelineBlockTitle}>Goal</h3>
+                <p className={styles.pipelineText}>{video.goal}</p>
+              </div>
+            )}
+            {clipPrompts.length > 0 && (
+              <div className={styles.pipelineBlock}>
+                <h3 className={styles.pipelineBlockTitle}>Veo prompts sent</h3>
+                {clipPrompts.map((cp, i) => (
+                  <div key={i} className={styles.veoPromptBlock}>
+                    <span className={styles.veoPromptRole}>
+                      Clip {i + 1}: {cp.role || "unknown"}
+                    </span>
+                    <pre className={styles.veoPromptText}>{cp.prompt}</pre>
+                  </div>
+                ))}
+              </div>
+            )}
+            {shotPlan?.timeline?.length > 0 && (
+              <div className={styles.pipelineBlock}>
+                <h3 className={styles.pipelineBlockTitle}>Timeline</h3>
+                <ul className={styles.timelineList}>
+                  {shotPlan.timeline.map((seg, i) => (
+                    <li key={i} className={styles.timelineItem}>
+                      <span className={styles.timelineKind}>{seg.kind}</span>
+                      <span className={styles.timelineDuration}>{seg.duration_sec}s</span>
+                      {seg.narration && (
+                        <span className={styles.timelineNarration}>{seg.narration}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </section>
       )}

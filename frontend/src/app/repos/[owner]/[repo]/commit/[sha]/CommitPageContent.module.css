@@ -121,6 +121,29 @@
   cursor: not-allowed;
 }
 
+/* Generate full flow - primary CTA */
+.btnFullFlow {
+  font-size: 15px;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  border: 1px solid #059669;
+  background: #059669;
+  color: #fff;
+}
+
+.btnFullFlow:hover:not(:disabled) {
+  background: #047857;
+  border-color: #047857;
+}
+
+.btnFullFlow:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .section {
   background: #fff;
   border: 1px solid #e5e5e5;
@@ -225,4 +248,219 @@
   font-size: 13px;
   color: #525252;
   line-height: 1.5;
+}
+
+/* Secondary button style */
+.btnSecondary {
+  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.btnSecondary:hover:not(:disabled) {
+  background: #fef3c7;
+  border-color: #d97706;
+}
+
+/* Test Panel styles */
+.testPanel {
+  background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%);
+  border: 2px solid #facc15;
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.testDescription {
+  font-size: 13px;
+  color: #713f12;
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.testActions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.testPhase {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+  border: 1px solid #fde68a;
+}
+
+.phaseNumber {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: #eab308;
+  color: #fff;
+  font-weight: 600;
+  font-size: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.phaseDesc {
+  font-size: 12px;
+  color: #92400e;
+  flex: 1;
+}
+
+.phaseDisabled {
+  font-size: 14px;
+  color: #a3a3a3;
+  font-style: italic;
+}
+
+.btnTest {
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  border: 1px solid #ca8a04;
+  background: #fef08a;
+  color: #713f12;
+  font-weight: 500;
+  min-width: 120px;
+}
+
+.btnTest:hover:not(:disabled) {
+  background: #fde047;
+  border-color: #a16207;
+}
+
+.btnTest:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.testResults {
+  margin-top: 20px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  border: 1px solid #fde68a;
+}
+
+.testResults h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #713f12;
+  margin-bottom: 12px;
+}
+
+.testResultsCode {
+  font-size: 11px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Pipeline data section */
+.pipelineData {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pipelineBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pipelineBlockTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.pipelineText {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #525252;
+}
+
+.veoPromptBlock {
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border-left: 3px solid #059669;
+  margin-bottom: 12px;
+}
+
+.veoPromptBlock:last-child {
+  margin-bottom: 0;
+}
+
+.veoPromptRole {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #059669;
+  margin-bottom: 8px;
+}
+
+.veoPromptText {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #374151;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.timelineList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timelineItem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.timelineKind {
+  font-weight: 600;
+  color: #374151;
+  min-width: 120px;
+}
+
+.timelineDuration {
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.timelineNarration {
+  color: #525252;
+  flex: 1;
 }

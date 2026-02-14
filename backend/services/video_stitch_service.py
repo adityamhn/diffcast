@@ -321,3 +321,70 @@ def burn_captions(
     ]
     _run(cmd, "caption burn failed")
     return probe_video(out)
+
+
+def assemble_feature_video(
+    opener_clip: str | Path,
+    demo_video: str | Path,
+    closing_clips: list[str | Path],
+    output_path: str | Path,
+) -> dict[str, Any]:
+    """Assemble final feature video from Veo clips and demo recording.
+
+    Final structure: [Veo Opener 6s] → [Demo ~10s] → [Veo Conclusion 6s]
+
+    All clips are normalized to ensure consistent format before concatenation.
+
+    Args:
+        opener_clip: Path to Veo opener clip (6s)
+        demo_video: Path to browser-use demo recording
+        closing_clips: List of paths to closing Veo clips (1 clip, 6s)
+        output_path: Where to save the assembled video
+
+    Returns:
+        Dict with video metadata (duration_sec, width, height, has_audio)
+    """
+    ensure_ffmpeg()
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    logger.info(
+        "Assembling feature video opener=%s demo=%s closing_count=%d output=%s",
+        opener_clip,
+        demo_video,
+        len(closing_clips),
+        out,
+    )
+
+    with tempfile.TemporaryDirectory(prefix="diffcast-assemble-") as temp_dir:
+        temp_root = Path(temp_dir)
+        normalized_paths: list[Path] = []
+
+        # Normalize opener
+        opener_norm = temp_root / "opener_norm.mp4"
+        normalize_video(opener_clip, opener_norm)
+        normalized_paths.append(opener_norm)
+        logger.debug("Normalized opener: %s", opener_norm)
+
+        # Normalize demo
+        demo_norm = temp_root / "demo_norm.mp4"
+        normalize_video(demo_video, demo_norm)
+        normalized_paths.append(demo_norm)
+        logger.debug("Normalized demo: %s", demo_norm)
+
+        # Normalize closing clips
+        for i, clip in enumerate(closing_clips):
+            clip_norm = temp_root / f"closing_{i:02d}_norm.mp4"
+            normalize_video(clip, clip_norm)
+            normalized_paths.append(clip_norm)
+            logger.debug("Normalized closing clip %d: %s", i, clip_norm)
+
+        # Concatenate all normalized clips
+        result = concat_videos(normalized_paths, out)
+
+    logger.info(
+        "Feature video assembled output=%s duration=%.2fs",
+        out,
+        result["duration_sec"],
+    )
+    return result

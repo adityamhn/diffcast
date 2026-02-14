@@ -106,16 +106,63 @@ def _snap_duration(requested: int) -> int:
     return min(_VEO_ALLOWED_DURATIONS, key=lambda d: abs(d - requested))
 
 
+def _load_reference_image(image_path: str | Path) -> Any:
+    """Load an image file and create a Veo reference image object."""
+    from google.genai import types
+
+    image_path = Path(image_path)
+    if not image_path.exists():
+        raise GeminiVideoError(f"Reference image not found: {image_path}")
+
+    image_bytes = image_path.read_bytes()
+    if not image_bytes:
+        raise GeminiVideoError(f"Reference image is empty: {image_path}")
+
+    # Determine mime type from extension
+    suffix = image_path.suffix.lower()
+    mime_map = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }
+    mime_type = mime_map.get(suffix, "image/png")
+
+    # Create Image object with bytes and mime type
+    image = types.Image(image_bytes=image_bytes, mime_type=mime_type)
+
+    # Create reference with "asset" type to preserve visual style/elements
+    reference = types.VideoGenerationReferenceImage(
+        image=image,
+        reference_type="asset",
+    )
+
+    logger.debug("Loaded reference image path=%s size=%d mime=%s", image_path, len(image_bytes), mime_type)
+    return reference
+
+
 def generate_veo_clip(
     prompt: str,
     output_path: str | Path,
-    duration_sec: int = 4,
+    duration_sec: int = 6,
     aspect_ratio: str = "16:9",
+    reference_image_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Generate a short cinematic insert clip with Veo.
 
     Uses AI Studio Gemini API (google-genai SDK) and returns local path + metadata.
     Veo 3.1 models only accept durations of exactly 4, 6, or 8 seconds.
+
+    Args:
+        prompt: Text prompt describing the video to generate
+        output_path: Where to save the generated video
+        duration_sec: Desired duration (will snap to 4, 6, or 8)
+        aspect_ratio: Video aspect ratio (default 16:9)
+        reference_image_path: Optional path to a reference image (snapshot) that
+            will be used as a visual reference for the generated video
+
+    Returns:
+        Dict with path, model, duration_sec, prompt, and has_reference_image
 
     Follows the official polling pattern from:
     https://ai.google.dev/gemini-api/docs/video
@@ -127,20 +174,35 @@ def generate_veo_clip(
     client = _build_client()
     actual_duration = _snap_duration(int(duration_sec))
 
-    logger.info("Generating Veo clip model=%s requested_sec=%s actual_sec=%s", model, duration_sec, actual_duration)
+    has_reference = reference_image_path is not None
+    logger.info(
+        "Generating Veo clip model=%s requested_sec=%s actual_sec=%s has_reference=%s",
+        model,
+        duration_sec,
+        actual_duration,
+        has_reference,
+    )
+    logger.info("Veo prompt (clip): %s", prompt[:500] + ("..." if len(prompt) > 500 else ""))
+    print(f"[Veo] Prompt sent:\n{prompt}\n")
 
     try:
         from google.genai import types
 
+        # Build config with optional reference images.
+        # Note: person_generation is not included - "allow_all" is not supported by Veo 3.1.
+        config_kwargs: dict[str, Any] = {
+            "duration_seconds": actual_duration,
+            "aspect_ratio": aspect_ratio,
+        }
+
+        if reference_image_path:
+            reference = _load_reference_image(reference_image_path)
+            config_kwargs["reference_images"] = [reference]
+
         operation = client.models.generate_videos(
             model=model,
             prompt=prompt,
-            config=types.GenerateVideosConfig(
-                duration_seconds=actual_duration,
-                aspect_ratio=aspect_ratio,
-                person_generation="allow_all",
-                generate_audio=False,
-            ),
+            config=types.GenerateVideosConfig(**config_kwargs),
         )
     except Exception as exc:
         raise GeminiVideoError(f"Veo request failed: {exc}") from exc
@@ -188,12 +250,13 @@ def generate_veo_clip(
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         video_obj.save(str(out))
-        logger.info("Veo clip saved via SDK path=%s", out)
+        logger.info("Veo clip saved via SDK path=%s has_reference=%s", out, has_reference)
         return {
             "path": str(out),
             "model": model,
             "duration_sec": actual_duration,
             "prompt": prompt,
+            "has_reference_image": has_reference,
         }
     except Exception as sdk_err:
         logger.warning("SDK save failed, falling back to byte extraction: %s", sdk_err)
@@ -217,4 +280,5 @@ def generate_veo_clip(
         "model": model,
         "duration_sec": actual_duration,
         "prompt": prompt,
+        "has_reference_image": has_reference,
     }

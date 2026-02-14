@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import logging
+import tempfile
+import uuid
+from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
 from firebase_schema import commit_id
-from services.media_generation_service import generate_browser_use_goal
+from services.storage_service import upload_file
+from services.media_generation_service import (
+    generate_browser_use_goal,
+    generate_scene_script,
+    generate_shot_plan,
+)
 from services import (
     enqueue_commit_pipeline,
     enqueue_feature_demo_pipeline,
@@ -17,6 +25,8 @@ from services import (
     list_videos,
     update_commit_goal,
 )
+from services.snapshot_service import extract_snapshots
+from services.video_stitch_service import probe_video
 
 pipeline_bp = Blueprint("pipeline", __name__, url_prefix="/api")
 logger = logging.getLogger(__name__)
@@ -207,47 +217,21 @@ def trigger_feature_demo_pipeline():
 
 @pipeline_bp.route("/pipeline/ingest-base-video", methods=["POST"])
 def ingest_base_video():
-    """Queue final cinematic render from a source implementation video."""
-    data = request.get_json() or {}
-    commit_doc_id = data.get("commit_id")
-    if not commit_doc_id:
-        logger.warning("Ingest pipeline rejected: missing commit_id")
-        return jsonify({"error": "commit_id is required"}), 400
+    """Legacy endpoint - now redirects to unified pipeline.
 
-    source_video = data.get("source_video")
-    if not isinstance(source_video, dict):
-        logger.warning("Ingest pipeline rejected: source_video missing")
-        return jsonify({"error": "source_video object is required"}), 400
-    kind = str(source_video.get("kind", "")).strip()
-    uri = str(source_video.get("uri", "")).strip()
-    if not kind or not uri:
-        return jsonify({"error": "source_video.kind and source_video.uri are required"}), 400
-    if kind not in {"local_path", "https_url", "gs_uri"}:
-        return jsonify({"error": "source_video.kind must be one of local_path, https_url, gs_uri"}), 400
-
-    force = bool(data.get("force", False))
-    style_profile = str(data.get("style_profile", "apple_keynote_v1")).strip() or "apple_keynote_v1"
-    languages = data.get("languages")
-    if languages is not None and not isinstance(languages, list):
-        return jsonify({"error": "languages must be an array of language codes"}), 400
-
-    try:
-        result = enqueue_ingest_pipeline(
-            commit_id=commit_doc_id,
-            source_video=source_video,
-            languages=languages,
-            style_profile=style_profile,
-            force=force,
-        )
-    except ValueError as exc:
-        logger.warning("Ingest pipeline failed commit_id=%s error=%s", commit_doc_id, exc)
-        return jsonify({"error": str(exc)}), 404
-    except Exception as exc:
-        logger.exception("Ingest pipeline unexpected failure commit_id=%s", commit_doc_id)
-        return jsonify({"error": str(exc)}), 500
-
-    video = get_video(result["video_id"])
-    return jsonify({"ok": True, **result, "video": video}), 202 if result.get("queued") else 200
+    The unified pipeline auto-generates demo videos, so manual source video
+    ingestion is no longer needed. Use POST /pipeline/commit instead.
+    """
+    return jsonify({
+        "error": "This endpoint is deprecated. Use POST /pipeline/commit instead.",
+        "message": "The unified pipeline now auto-generates demo videos from commits. "
+                   "Simply call POST /pipeline/commit with your commit_id.",
+        "example": {
+            "commit_id": "octocat_hello-world_abc1234",
+            "languages": ["en", "es"],
+            "force": False,
+        },
+    }), 410  # HTTP 410 Gone
 
 
 @pipeline_bp.route("/videos/<video_doc_id>", methods=["GET"])
@@ -279,3 +263,334 @@ def list_repo_videos(owner: str, repo: str):
     except Exception as exc:
         logger.exception("Video list failed repo=%s", repo_full_name)
         return jsonify({"error": str(exc)}), 500
+
+
+# =============================================================================
+# TEST ENDPOINTS - For testing individual pipeline phases
+# =============================================================================
+
+
+@pipeline_bp.route("/pipeline/test/goal", methods=["POST"])
+def test_goal_phase():
+    """TEST: Generate browser-use goal from commit diff (Phase 1)."""
+    data = request.get_json() or {}
+    commit_doc_id = _resolve_commit_id(data)
+    if isinstance(commit_doc_id, tuple):
+        return commit_doc_id  # Error response
+
+    commit_doc = get_commit_by_id(commit_doc_id)
+    if not commit_doc:
+        return jsonify({"error": f"Commit not found: {commit_doc_id}"}), 404
+
+    try:
+        goal = generate_browser_use_goal(commit_doc)
+        update_commit_goal(commit_doc_id, goal)
+        return jsonify({
+            "ok": True,
+            "phase": "goal",
+            "commit_id": commit_doc_id,
+            "goal": goal,
+            "goal_length": len(goal),
+        })
+    except Exception as exc:
+        logger.exception("Test goal phase failed commit_id=%s", commit_doc_id)
+        return jsonify({"error": str(exc)}), 500
+
+
+@pipeline_bp.route("/pipeline/test/demo", methods=["POST"])
+def test_demo_phase():
+    """TEST: Record demo video using browser-use (Phase 2)."""
+    data = request.get_json() or {}
+    commit_doc_id = _resolve_commit_id(data)
+    if isinstance(commit_doc_id, tuple):
+        return commit_doc_id  # Error response
+
+    try:
+        result = enqueue_feature_demo_pipeline(commit_id=commit_doc_id, force=True)
+        return jsonify({
+            "ok": True,
+            "phase": "demo",
+            "commit_id": commit_doc_id,
+            **result,
+        })
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Test demo phase failed commit_id=%s", commit_doc_id)
+        return jsonify({"error": str(exc)}), 500
+
+
+@pipeline_bp.route("/pipeline/test/script", methods=["POST"])
+def test_script_phase():
+    """TEST: Generate scene script and shot plan (Phase 3)."""
+    data = request.get_json() or {}
+    commit_doc_id = _resolve_commit_id(data)
+    if isinstance(commit_doc_id, tuple):
+        return commit_doc_id  # Error response
+
+    commit_doc = get_commit_by_id(commit_doc_id)
+    if not commit_doc:
+        return jsonify({"error": f"Commit not found: {commit_doc_id}"}), 404
+
+    demo_duration = data.get("demo_duration_sec", 10.0)
+
+    try:
+        script = generate_scene_script(commit_doc)
+        shot_plan = generate_shot_plan(
+            script=script,
+            target_duration_sec=28,
+            demo_video_duration_sec=demo_duration,
+        )
+        return jsonify({
+            "ok": True,
+            "phase": "script",
+            "commit_id": commit_doc_id,
+            "script": script,
+            "shot_plan": shot_plan,
+            "clip_prompts_count": len(shot_plan.get("clip_prompts", [])),
+            "timeline_segments": len(shot_plan.get("timeline", [])),
+        })
+    except Exception as exc:
+        logger.exception("Test script phase failed commit_id=%s", commit_doc_id)
+        return jsonify({"error": str(exc)}), 500
+
+
+@pipeline_bp.route("/pipeline/test/snapshots", methods=["POST"])
+def test_snapshots_phase():
+    """TEST: Extract snapshots from a video file (Phase 4).
+
+    Body:
+      { "video_url": "https://..." } - URL of video to extract snapshots from
+    """
+    data = request.get_json() or {}
+    video_url = data.get("video_url")
+
+    if not video_url:
+        return jsonify({
+            "error": "video_url is required",
+            "example": {"video_url": "https://storage.googleapis.com/.../demo.mp4"},
+        }), 400
+
+    try:
+        import requests as http_requests
+        import shutil
+
+        # Download video to temp file
+        workspace = Path(tempfile.mkdtemp(prefix="diffcast-test-snapshots-"))
+        video_path = workspace / "input.mp4"
+
+        logger.info("Downloading video for snapshot test url=%s", video_url)
+        response = http_requests.get(video_url, timeout=60)
+        response.raise_for_status()
+        video_path.write_bytes(response.content)
+
+        # Probe video
+        video_meta = probe_video(video_path)
+
+        # Extract snapshots
+        snapshots_dir = workspace / "snapshots"
+        snapshot_paths = extract_snapshots(
+            video_path=video_path,
+            output_dir=snapshots_dir,
+            num_snapshots=2,
+            strategy="uniform",
+        )
+
+        # Get snapshot info
+        snapshot_info = []
+        for i, path in enumerate(snapshot_paths):
+            snapshot_info.append({
+                "index": i,
+                "filename": path.name,
+                "size_bytes": path.stat().st_size,
+            })
+
+        # Cleanup
+        shutil.rmtree(workspace, ignore_errors=True)
+
+        return jsonify({
+            "ok": True,
+            "phase": "snapshots",
+            "video_url": video_url,
+            "video_duration_sec": video_meta["duration_sec"],
+            "snapshots_extracted": len(snapshot_paths),
+            "snapshots": snapshot_info,
+        })
+    except Exception as exc:
+        logger.exception("Test snapshots phase failed")
+        return jsonify({"error": str(exc)}), 500
+
+
+@pipeline_bp.route("/pipeline/test/veo", methods=["POST"])
+def test_veo_phase():
+    """TEST: Generate a single Veo clip (Phase 5).
+
+    Body:
+      {
+        "prompt": "Detailed Veo prompt...",
+        "reference_image_url": "https://..." (optional),
+        "duration_sec": 6
+      }
+    """
+    data = request.get_json() or {}
+    prompt = data.get("prompt")
+    reference_image_url = data.get("reference_image_url")
+    duration_sec = data.get("duration_sec", 6)
+
+    if not prompt:
+        return jsonify({
+            "error": "prompt is required",
+            "example": {
+                "prompt": "Photorealistic product demo of a web app...",
+                "reference_image_url": "https://... (optional)",
+                "duration_sec": 6,
+            },
+        }), 400
+
+    try:
+        from services.gemini_video_service import generate_veo_clip
+        import requests as http_requests
+        import shutil
+
+        workspace = Path(tempfile.mkdtemp(prefix="diffcast-test-veo-"))
+        reference_path = None
+
+        # Download reference image if provided
+        if reference_image_url:
+            logger.info("Downloading reference image url=%s", reference_image_url)
+            response = http_requests.get(reference_image_url, timeout=30)
+            response.raise_for_status()
+            reference_path = workspace / "reference.png"
+            reference_path.write_bytes(response.content)
+
+        # Generate Veo clip
+        output_path = workspace / "veo_test.mp4"
+        result = generate_veo_clip(
+            prompt=prompt,
+            output_path=output_path,
+            duration_sec=duration_sec,
+            reference_image_path=reference_path,
+        )
+
+        # Get video metadata
+        video_meta = probe_video(result["path"])
+
+        # Upload to blob storage
+        dest_path = f"test/veo/veo_{uuid.uuid4().hex}.mp4"
+        upload_result = upload_file(
+            local_path=result["path"],
+            destination_path=dest_path,
+            content_type="video/mp4",
+        )
+        video_url = upload_result["url"]
+        logger.info("Test Veo clip uploaded url=%s path=%s", video_url, dest_path)
+        print(f"Test Veo clip URL: {video_url}")
+
+        # Cleanup temp workspace
+        shutil.rmtree(workspace, ignore_errors=True)
+
+        return jsonify({
+            "ok": True,
+            "phase": "veo",
+            "prompt_length": len(prompt),
+            "has_reference_image": result.get("has_reference_image", False),
+            "model": result.get("model"),
+            "duration_sec": video_meta["duration_sec"],
+            "width": video_meta["width"],
+            "height": video_meta["height"],
+            "video_url": video_url,
+            "storage_path": dest_path,
+        })
+    except Exception as exc:
+        logger.exception("Test veo phase failed")
+        return jsonify({"error": str(exc)}), 500
+
+
+@pipeline_bp.route("/pipeline/test/stitch", methods=["POST"])
+def test_stitch_phase():
+    """TEST: Assemble videos (Phase 6).
+
+    Body:
+      {
+        "opener_url": "https://...",
+        "demo_url": "https://...",
+        "closing_urls": ["https://..."]  # 1 clip (Veo conclusion, 6s)
+      }
+    """
+    data = request.get_json() or {}
+    opener_url = data.get("opener_url")
+    demo_url = data.get("demo_url")
+    closing_urls = data.get("closing_urls", [])
+
+    if not opener_url or not demo_url:
+        return jsonify({
+            "error": "opener_url and demo_url are required",
+            "example": {
+                "opener_url": "https://.../veo_opener.mp4",
+                "demo_url": "https://.../demo.mp4",
+                "closing_urls": ["https://.../veo_conclusion.mp4"],
+            },
+        }), 400
+
+    try:
+        from services.video_stitch_service import assemble_feature_video
+        import requests as http_requests
+        import shutil
+
+        workspace = Path(tempfile.mkdtemp(prefix="diffcast-test-stitch-"))
+
+        def download_video(url, name):
+            path = workspace / name
+            response = http_requests.get(url, timeout=60)
+            response.raise_for_status()
+            path.write_bytes(response.content)
+            return path
+
+        # Download all videos
+        logger.info("Downloading videos for stitch test")
+        opener_path = download_video(opener_url, "opener.mp4")
+        demo_path = download_video(demo_url, "demo.mp4")
+        closing_paths = [
+            download_video(url, f"closing_{i}.mp4")
+            for i, url in enumerate(closing_urls)
+        ]
+
+        # Assemble
+        output_path = workspace / "assembled.mp4"
+        result = assemble_feature_video(
+            opener_clip=opener_path,
+            demo_video=demo_path,
+            closing_clips=closing_paths,
+            output_path=output_path,
+        )
+
+        # Cleanup
+        shutil.rmtree(workspace, ignore_errors=True)
+
+        return jsonify({
+            "ok": True,
+            "phase": "stitch",
+            "input_videos": 1 + 1 + len(closing_paths),
+            "output_duration_sec": result["duration_sec"],
+            "output_width": result["width"],
+            "output_height": result["height"],
+        })
+    except Exception as exc:
+        logger.exception("Test stitch phase failed")
+        return jsonify({"error": str(exc)}), 500
+
+
+def _resolve_commit_id(data: dict) -> str | tuple:
+    """Helper to resolve commit_id from request data."""
+    commit_doc_id = data.get("commit_id")
+    if not commit_doc_id:
+        owner = data.get("owner")
+        repo = data.get("repo") or data.get("name")
+        sha = data.get("sha")
+        if not all([owner, repo, sha]):
+            return jsonify({
+                "error": "Provide commit_id or owner/repo/sha",
+                "example": {"owner": "octocat", "repo": "hello", "sha": "abc1234"},
+            }), 400
+        commit_doc_id = commit_id(f"{owner}/{repo}", sha)
+    return commit_doc_id

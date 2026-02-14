@@ -932,11 +932,30 @@ def generate_commit_media_assets(
 def generate_shot_plan(
     script: dict[str, Any],
     target_duration_sec: int,
+    demo_video_duration_sec: float | None = None,
 ) -> dict[str, Any]:
-    """Create structured cinematic plan for source + Veo inserts."""
+    """Create structured cinematic plan with 2 Veo clips for web app product demos.
+
+    The plan generates exactly 2 clip prompts (6 seconds each):
+    - Clip 1 (opener): Introduces the feature, uses snapshot 0 as reference
+    - Clip 2 (conclusion): Satisfying conclusion, uses snapshot 1 as reference
+
+    Final video structure: [Veo Opener 6s] → [Demo ~10s] → [Veo Conclusion 6s]
+
+    Args:
+        script: Scene script with title, feature_summary, scenes
+        target_duration_sec: Target total duration
+        demo_video_duration_sec: Duration of the demo video (for timeline calculation)
+
+    Returns:
+        Dict with clip_prompts (list of 2), timeline, and total_duration_sec
+    """
     scenes = script.get("scenes", [])
     if not scenes:
         raise ScriptValidationError("script.scenes is required for shot planning")
+
+    # Default demo duration if not provided
+    demo_duration = demo_video_duration_sec or 10.0
 
     payload = {
         "title": script.get("title", "Product Update"),
@@ -944,6 +963,7 @@ def generate_shot_plan(
         "scene_narration_seed": [scene.get("narration_seed", "") for scene in scenes],
         "scene_on_screen_text": [scene.get("on_screen_text", "") for scene in scenes],
         "target_duration_sec": target_duration_sec,
+        "demo_duration_sec": demo_duration,
     }
 
     response = invoke_llm(
@@ -953,6 +973,7 @@ def generate_shot_plan(
                 "content": (
                     "You plan photorealistic web application product demo videos for Veo video generation. "
                     "Your prompts must be highly detailed and cinematic, describing exactly what happens on screen. "
+                    "Each clip will use a screenshot from the actual demo as a visual reference. "
                     "Output only JSON with rich, descriptive prompts for video generation AI."
                 ),
             },
@@ -961,18 +982,32 @@ def generate_shot_plan(
                 "content": (
                     "Return JSON only with this shape:\n"
                     "{\n"
-                    '  "opener_prompt": "string (detailed Veo prompt for opener video)",\n'
-                    '  "outro_prompt": "string (detailed Veo prompt for outro video)",\n'
+                    '  "clip_prompts": [\n'
+                    "    {\n"
+                    '      "prompt": "string (detailed Veo prompt)",\n'
+                    '      "snapshot_index": 0,\n'
+                    '      "role": "opener"\n'
+                    "    },\n"
+                    "    {\n"
+                    '      "prompt": "string (detailed Veo prompt)",\n'
+                    '      "snapshot_index": 1,\n'
+                    '      "role": "conclusion"\n'
+                    "    }\n"
+                    "  ],\n"
                     '  "timeline": [\n'
                     "    {\n"
-                    '      "kind": "opener|source|outro",\n'
+                    '      "kind": "veo_opener|demo|veo_conclusion",\n'
                     '      "label": "string",\n'
                     '      "duration_sec": number,\n'
                     '      "narration": "string"\n'
                     "    }\n"
                     "  ]\n"
                     "}\n\n"
-                    "CRITICAL: The opener_prompt and outro_prompt must be HIGHLY DETAILED Veo video generation prompts "
+                    "STRUCTURE: The final video will be assembled as:\n"
+                    "1. Veo Opener (6 seconds) - cinematic intro with reference to snapshot 0\n"
+                    "2. Demo Video (~10 seconds) - actual browser recording of the feature\n"
+                    "3. Veo Conclusion (6 seconds) - satisfying ending with snapshot 1\n\n"
+                    "CRITICAL: Each clip_prompt must be a HIGHLY DETAILED Veo video generation prompt "
                     "for photorealistic web application product demos. Each prompt should include:\n"
                     "- Description: What is shown on the screen (web app UI, features being demonstrated)\n"
                     "- Style: 'photorealistic cinematic product demo, screen-recording realism'\n"
@@ -984,17 +1019,17 @@ def generate_shot_plan(
                     "- Ending: How the video concludes (UI stable and readable before fade out)\n"
                     "- Keywords: '16:9, 4K, photorealistic, product demo, web app UI, cursor interaction, smooth scrolling, clean modern interface, responsive UI, cinematic clarity, no text overlays'\n\n"
                     "IMPORTANT CONSTRAINTS:\n"
+                    "- Generate EXACTLY 2 clip_prompts with snapshot_index 0, 1\n"
+                    "- Each clip will use its corresponding snapshot as a visual reference image\n"
+                    "- The prompts should describe animation/motion based on what's in that snapshot\n"
                     "- NO on-screen captions, text overlays, or annotations - the UI itself demonstrates the feature\n"
                     "- Focus on realistic cursor interactions, typing, scrolling, and UI responsiveness\n"
-                    "- Show a realistic thin-bezel monitor with the web app displayed\n"
-                    "- Include hover states, loading indicators, smooth animations\n"
-                    "- The opener should introduce the feature being showcased\n"
-                    "- The outro should show the completed interaction with a satisfying conclusion\n\n"
-                    "Timeline constraints:\n"
-                    "- total timeline duration must be between 20 and 35 seconds.\n"
-                    "- include exactly one opener and one outro item (no transitions).\n"
-                    "- source segment must appear in timeline.\n"
-                    "- keep narration simple and non-technical.\n\n"
+                    "- Show a realistic thin-bezel monitor with the web app displayed\n\n"
+                    "Timeline should have exactly 3 segments:\n"
+                    f"- veo_opener: 6 seconds\n"
+                    f"- demo: {demo_duration} seconds\n"
+                    "- veo_conclusion: 6 seconds\n"
+                    "- Keep narration simple and non-technical.\n\n"
                     f"Input JSON:\n{json.dumps(payload, ensure_ascii=True)}"
                 ),
             },
@@ -1002,15 +1037,36 @@ def generate_shot_plan(
         model=LLMModel.GEMINI_2_0_FLASH,
         json_mode=True,
         temperature=0.4,
-        max_output_tokens=2500,
+        max_output_tokens=4000,
         retries=1,
-        timeout_seconds=60.0,
+        timeout_seconds=90.0,
     )
 
     data = response.get("json")
     if not isinstance(data, dict):
         raise ScriptValidationError("shot plan must be a JSON object")
 
+    # Validate and normalize clip_prompts
+    clip_prompts_raw = data.get("clip_prompts")
+    if not isinstance(clip_prompts_raw, list) or len(clip_prompts_raw) < 2:
+        raise ScriptValidationError("shot plan must have at least 2 clip_prompts")
+
+    clip_prompts: list[dict[str, Any]] = []
+    for i, item in enumerate(clip_prompts_raw[:2]):
+        if not isinstance(item, dict):
+            raise ScriptValidationError(f"clip_prompts[{i}] must be an object")
+        prompt = _truncate(str(item.get("prompt", "")).strip(), 2000)
+        if not prompt:
+            raise ScriptValidationError(f"clip_prompts[{i}].prompt is required")
+        snapshot_index = int(item.get("snapshot_index", i))
+        role = str(item.get("role", "")).strip() or ["opener", "conclusion"][i]
+        clip_prompts.append({
+            "prompt": prompt,
+            "snapshot_index": snapshot_index,
+            "role": role,
+        })
+
+    # Validate and normalize timeline
     timeline = data.get("timeline")
     if not isinstance(timeline, list) or not timeline:
         raise ScriptValidationError("shot plan timeline must be a non-empty array")
@@ -1020,7 +1076,7 @@ def generate_shot_plan(
     for item in timeline:
         if not isinstance(item, dict):
             continue
-        kind = str(item.get("kind", "source")).strip().lower() or "source"
+        kind = str(item.get("kind", "demo")).strip().lower() or "demo"
         label = _truncate(str(item.get("label", "Scene")).strip() or "Scene", 120)
         narration = _truncate(str(item.get("narration", "")).strip(), 220)
         try:
@@ -1042,19 +1098,25 @@ def generate_shot_plan(
     if not normalized_timeline:
         raise ScriptValidationError("shot plan timeline has no valid segments")
 
+    # Ensure minimum duration
     if total < 20:
         normalized_timeline[-1]["duration_sec"] += 20 - total
         total = 20
-    if total > 35:
-        scale = 35 / total
+    if total > 40:
+        scale = 40 / total
         for item in normalized_timeline:
             item["duration_sec"] = round(max(1.0, item["duration_sec"] * scale), 2)
         total = sum(item["duration_sec"] for item in normalized_timeline)
 
-    # Use longer truncation limits for detailed Veo prompts (web app product demo style)
+    logger.info(
+        "Shot plan generated clip_count=%d timeline_segments=%d total_duration=%.2f",
+        len(clip_prompts),
+        len(normalized_timeline),
+        total,
+    )
+
     return {
-        "opener_prompt": _truncate(str(data.get("opener_prompt", "")).strip(), 1500),
-        "outro_prompt": _truncate(str(data.get("outro_prompt", "")).strip(), 1500),
+        "clip_prompts": clip_prompts,
         "timeline": normalized_timeline,
         "total_duration_sec": round(total, 2),
     }
