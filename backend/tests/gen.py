@@ -1,13 +1,16 @@
 from browser_use import Agent, Browser, ChatGoogle
 from dotenv import load_dotenv
 import asyncio
+import os
 
-load_dotenv()
+load_dotenv("../.env")
 
 
 class FeatureVideoRecorder:
     def __init__(self):
-        self.llm = ChatGoogle(model="gemini-2.5-flash", temperature=0.3)
+        print("Initializing FeatureVideoRecorder")
+        print("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
+        self.llm = ChatGoogle(model="gemini-2.5-flash-lite", temperature=0.3, api_key=os.getenv("GEMINI_API_KEY"))
 
     async def record_feature_demo(
         self,
@@ -39,7 +42,7 @@ class FeatureVideoRecorder:
         task = f"""
         1. Navigate to {website_url}
         2. Demonstrate this new feature: {feature_description}
-        3. Interact with the new UI elements naturally (click buttons, use dropdowns, etc.)
+        3. Interact naturally with the new UI (e.g., type in search, use filters if present)
         4. Keep the demonstration under 10 seconds
         5. Focus only on the changed feature
         """
@@ -75,6 +78,6 @@ class FeatureVideoRecorder:
 if __name__ == "__main__":
     asyncio.run(
         FeatureVideoRecorder().record_feature_demo(
-            "https://ricky-monty.netlify.app/", "Add a new feature which includes new filters, showcase the new filters"
+            "https://ricky-monty.netlify.app/", "Added a new search bar"
         )
     )

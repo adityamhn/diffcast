@@ -1,6 +1,8 @@
 import Link from "next/link";
-import { getRepos, getRepoCommits } from "@/lib/api";
+import { getRepo, getRepoCommits } from "@/lib/api";
 import { SyncCommitButton } from "@/components/SyncCommitButton";
+import { FeatureDemoButton } from "@/components/FeatureDemoButton";
+import { WebsiteUrlForm } from "@/components/WebsiteUrlForm";
 import styles from "./page.module.css";
 
 export const dynamic = "force-dynamic";
@@ -16,18 +18,21 @@ export default async function RepoPage({ params }) {
   const repoPath = `${owner}/${repo}`;
 
   let commitsData;
-  let repoInfo;
+  let repoInfo = null;
   let apiError = null;
   try {
-    [commitsData, repoInfo] = await Promise.all([
-      getRepoCommits(owner, repo),
-      getRepos().then((d) => d.repos.find((r) => r.full_name === repoPath)),
-    ]);
+    commitsData = await getRepoCommits(owner, repo);
   } catch (e) {
     apiError = e.message || String(e);
   }
+  try {
+    repoInfo = await getRepo(owner, repo);
+  } catch {
+    repoInfo = null;
+  }
 
   const commits = commitsData?.commits ?? [];
+  const hasWebsiteUrl = !!(repoInfo?.website_url?.trim?.());
 
   if (apiError) {
     return (
@@ -63,8 +68,15 @@ export default async function RepoPage({ params }) {
           {repoInfo?.default_branch && (
             <span className={styles.branch}>{repoInfo.default_branch}</span>
           )}
+          <div className={styles.websiteUrl}>
+            <span className={styles.websiteUrlLabel}>Demo URL</span>
+            <WebsiteUrlForm
+              owner={owner}
+              repo={repo}
+              initialUrl={repoInfo?.website_url}
+            />
+          </div>
         </header>
-        {console.log(commits)}
         {commits.length === 0 ? (
           <div className={styles.empty}>
             <p>No commits yet for this repository.</p>
@@ -88,6 +100,15 @@ export default async function RepoPage({ params }) {
                     repo={repo}
                     sha={commit.sha}
                     branch={commit.branch}
+                  />
+                  <FeatureDemoButton
+                    owner={owner}
+                    repo={repo}
+                    sha={commit.sha}
+                    status={commit.feature_demo_status}
+                    videoUrl={commit.feature_demo_video_url}
+                    error={commit.feature_demo_error}
+                    hasWebsiteUrl={hasWebsiteUrl}
                   />
                   {commit.pr_url && (
                     <a

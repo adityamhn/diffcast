@@ -82,6 +82,7 @@ def store_repo(
     name: str,
     default_branch: str = "main",
     webhook_secret: Optional[str] = None,
+    website_url: Optional[str] = None,
     enabled: bool = True,
 ) -> str:
     """Upsert repo document. Returns repo_id. Does not overwrite webhook_secret if already set."""
@@ -99,10 +100,20 @@ def store_repo(
     }
     if not doc.exists:
         data["created_at"] = now
+    if website_url is not None:
+        data["website_url"] = website_url
     ref.set(data, merge=True)
     if webhook_secret is not None:
         ref.update({"webhook_secret": webhook_secret})
     return rid
+
+
+def update_repo_website_url(repo_full_name: str, website_url: str | None) -> None:
+    """Update website_url for a repo."""
+    db = _get_db()
+    rid = repo_id(repo_full_name)
+    ref = db.collection("repos").document(rid)
+    ref.update({"website_url": website_url, "updated_at": datetime.utcnow()})
 
 
 def list_repos() -> list[dict]:
@@ -204,13 +215,20 @@ def register_repo(
     owner: str,
     name: str,
     webhook_secret: Optional[str] = None,
+    website_url: Optional[str] = None,
 ) -> dict:
-    """Register a repo. Optionally set per-repo webhook secret. Returns repo info with secret."""
+    """Register a repo. Optionally set per-repo webhook secret and website_url. Returns repo info with secret."""
     import secrets
     full_name = f"{owner}/{name}"
     rid = repo_id(full_name)
     secret = webhook_secret or secrets.token_urlsafe(32)
-    store_repo(full_name=full_name, owner=owner, name=name, webhook_secret=secret)
+    store_repo(
+        full_name=full_name,
+        owner=owner,
+        name=name,
+        webhook_secret=secret,
+        website_url=website_url,
+    )
     return {
         "repo_id": rid,
         "full_name": full_name,
@@ -229,6 +247,23 @@ def store_commit(commit: CommitDoc) -> str:
     data["created_at"] = data.get("created_at") or datetime.utcnow()
     db.collection("commits").document(cid).set(data, merge=True)
     return cid
+
+
+def update_commit_feature_demo(
+    commit_doc_id: str,
+    status: str,
+    video_url: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Update commit document with feature demo pipeline result."""
+    db = _get_db()
+    ref = db.collection("commits").document(commit_doc_id)
+    payload: dict[str, Any] = {
+        "feature_demo_status": status,
+        "feature_demo_video_url": video_url,
+        "feature_demo_error": error,
+    }
+    ref.set(payload, merge=True)
 
 
 def upsert_video_doc(video_doc_id: str, payload: dict[str, Any]) -> str:

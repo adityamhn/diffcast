@@ -4,7 +4,7 @@ import re
 
 from flask import Blueprint, request, jsonify
 
-from services import list_repos, list_commits, get_repo, register_repo
+from services import list_repos, list_commits, get_repo, register_repo, update_repo_website_url
 
 
 def _parse_github_url(url: str) -> tuple[str, str] | None:
@@ -50,11 +50,12 @@ def list_all():
 def add_by_url():
     """
     Register a repo by GitHub URL and webhook secret.
-    Body: { "repo_url": "https://github.com/owner/repo", "webhook_secret": "your-secret" }
+    Body: { "repo_url": "https://github.com/owner/repo", "webhook_secret": "your-secret", "website_url": "https://..." }
     """
     data = request.get_json() or {}
     repo_url = data.get("repo_url") or data.get("url")
     webhook_secret = data.get("webhook_secret")
+    website_url = data.get("website_url")
     if not repo_url:
         return jsonify({"error": "Missing repo_url"}), 400
     if not webhook_secret:
@@ -64,7 +65,12 @@ def add_by_url():
         return jsonify({"error": "Invalid GitHub URL. Use e.g. https://github.com/owner/repo"}), 400
     owner, name = parsed
     try:
-        result = register_repo(owner=owner, name=name, webhook_secret=webhook_secret)
+        result = register_repo(
+            owner=owner,
+            name=name,
+            webhook_secret=webhook_secret,
+            website_url=website_url,
+        )
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -74,17 +80,23 @@ def add_by_url():
 def register():
     """
     Register a repo for webhook processing.
-    Body: { "owner": "octocat", "repo": "hello-world" }
+    Body: { "owner": "octocat", "repo": "hello-world", "website_url": "https://app.example.com" }
     Returns webhook_secret to use when configuring the GitHub webhook.
     """
     data = request.get_json() or {}
     owner = data.get("owner")
     name = data.get("repo") or data.get("name")
-    webhook_secret = data.get("webhook_secret")  # Optional: provide your own
+    webhook_secret = data.get("webhook_secret")
+    website_url = data.get("website_url")
     if not owner or not name:
         return jsonify({"error": "Missing owner or repo"}), 400
     try:
-        result = register_repo(owner=owner, name=name, webhook_secret=webhook_secret)
+        result = register_repo(
+            owner=owner,
+            name=name,
+            webhook_secret=webhook_secret,
+            website_url=website_url,
+        )
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -115,4 +127,23 @@ def repo_detail(repo_path: str):
     repo = get_repo(repo_path)
     if not repo:
         return jsonify({"error": "Repo not found"}), 404
-    return jsonify(repo)
+    return jsonify(_sanitize_repo(repo))
+
+
+@repos_bp.route("/<path:repo_path>", methods=["PATCH"])
+def repo_update(repo_path: str):
+    """
+    Update repo settings (e.g. website_url for feature demo).
+    Body: { "website_url": "https://app.example.com" }
+    """
+    if "/" not in repo_path:
+        return jsonify({"error": "Use owner/repo format (e.g. octocat/hello-world)"}), 400
+    repo = get_repo(repo_path)
+    if not repo:
+        return jsonify({"error": "Repo not found"}), 404
+    data = request.get_json() or {}
+    website_url = data.get("website_url")
+    if website_url is not None:
+        update_repo_website_url(repo_path, website_url if website_url else None)
+        repo = get_repo(repo_path)
+    return jsonify(_sanitize_repo(repo))

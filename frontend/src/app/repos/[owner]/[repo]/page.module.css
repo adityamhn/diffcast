@@ -39,6 +39,20 @@
   color: #737373;
 }
 
+.websiteUrl {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.websiteUrlLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: #737373;
+  display: block;
+  margin-bottom: 6px;
+}
+
 .empty {
   background: #fff;
   border: 1px solid #e5e5e5;

@@ -11,6 +11,7 @@ repos/{repoId}
   - name: str
   - default_branch: str
   - webhook_secret: str | null  # Per-repo secret (optional; use shared GITHUB_WEBHOOK_SECRET if not set)
+  - website_url: str | null  # URL for feature demo recording (e.g. https://app.example.com)
   - enabled: bool  # Process webhooks from this repo (default True)
   - created_at: timestamp
   - updated_at: timestamp
@@ -30,6 +31,9 @@ commits/{commitId}
   - pr_title: str | null
   - files: [{ path, status, additions, deletions, patch }]
   - diff_summary: str | null  # Human-readable (Gemini later)
+  - feature_demo_status: str | null  # queued, running, completed, failed
+  - feature_demo_video_url: str | null  # Blob storage URL of recorded demo
+  - feature_demo_error: str | null
   - created_at: timestamp
 
 webhook_events/{eventId}
@@ -78,6 +82,7 @@ class RepoDoc:
     name: str
     default_branch: str = "main"
     webhook_secret: Optional[str] = None
+    website_url: Optional[str] = None
     enabled: bool = True
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

@@ -5,25 +5,36 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import tempfile
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from services.firebase_service import (
     build_video_doc_id,
     get_commit_by_id,
+    get_repo,
     get_video,
+    update_commit_feature_demo,
     update_video_status,
     upsert_video_doc,
 )
-from services.media_generation_service import generate_commit_media_assets, parse_target_languages
+from services.media_generation_service import (
+    generate_browser_use_goal,
+    generate_commit_media_assets,
+    parse_target_languages,
+)
+from services.feature_video_recorder import record_feature_demo_sync
 from services.storage_service import upload_file
 
 MAX_WORKERS = max(1, int(os.environ.get("PIPELINE_MAX_WORKERS", "2")))
 _EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="diffcast-pipeline")
 _FUTURES: dict[str, Future] = {}
+_FEATURE_DEMO_FUTURES: dict[str, Future] = {}
 _LOCK = Lock()
+_FEATURE_DEMO_LOCK = Lock()
 logger = logging.getLogger(__name__)
 
 
@@ -303,4 +314,138 @@ def enqueue_commit_pipeline(
         "commit_id": commit_id,
         "status": "queued",
         "languages_requested": languages_requested,
+    }
+
+
+def _run_feature_demo_pipeline(commit_doc_id: str) -> None:
+    """Run feature demo pipeline: generate goal -> record -> upload -> update commit."""
+    logger.info("Feature demo pipeline started commit_id=%s", commit_doc_id)
+    commit_doc = get_commit_by_id(commit_doc_id)
+    if not commit_doc:
+        logger.error("Feature demo failed: commit not found commit_id=%s", commit_doc_id)
+        update_commit_feature_demo(
+            commit_doc_id=commit_doc_id,
+            status="failed",
+            error=f"Commit not found: {commit_doc_id}",
+        )
+        return
+
+    repo_full_name = commit_doc.get("repo_full_name", "")
+    repo = get_repo(repo_full_name)
+    website_url = (repo or {}).get("website_url") or ""
+    if not website_url or not website_url.strip():
+        logger.error(
+            "Feature demo failed: repo has no website_url commit_id=%s repo=%s",
+            commit_doc_id,
+            repo_full_name,
+        )
+        update_commit_feature_demo(
+            commit_doc_id=commit_doc_id,
+            status="failed",
+            error=f"Repo {repo_full_name} has no website_url. Set it via PATCH /api/repos/{repo_full_name}",
+        )
+        return
+
+    website_url = website_url.strip()
+    workspace_dir: Path | None = None
+
+    try:
+        update_commit_feature_demo(commit_doc_id=commit_doc_id, status="running")
+
+        goal = generate_browser_use_goal(commit_doc)
+        logger.info("Feature demo goal generated commit_id=%s goal_len=%s", commit_doc_id, len(goal))
+
+        workspace_dir = Path(tempfile.mkdtemp(prefix="diffcast-feature-demo-"))
+        video_path = record_feature_demo_sync(
+            website_url=website_url,
+            feature_description=goal,
+            output_dir=workspace_dir,
+            headless=True,
+        )
+
+        if not video_path.exists():
+            raise FileNotFoundError(f"Recorded video not found: {video_path}")
+
+        repo_id_val = commit_doc.get("repo_id", "")
+        sha_short = commit_doc.get("sha_short", commit_doc_id.split("_")[-1])
+        ext = video_path.suffix or ".mp4"
+        content_type = "video/mp4" if ext == ".mp4" else "video/webm"
+        dest_path = f"feature_demos/{repo_id_val}/{sha_short}/demo{ext}"
+
+        upload_result = upload_file(
+            local_path=video_path,
+            destination_path=dest_path,
+            content_type=content_type,
+        )
+        video_url = upload_result.get("url", "")
+
+        update_commit_feature_demo(
+            commit_doc_id=commit_doc_id,
+            status="completed",
+            video_url=video_url,
+            error=None,
+        )
+        logger.info(
+            "Feature demo completed commit_id=%s video_url=%s",
+            commit_doc_id,
+            video_url,
+        )
+    except Exception as exc:
+        logger.exception("Feature demo failed commit_id=%s", commit_doc_id)
+        update_commit_feature_demo(
+            commit_doc_id=commit_doc_id,
+            status="failed",
+            error=str(exc),
+        )
+    finally:
+        with _FEATURE_DEMO_LOCK:
+            _FEATURE_DEMO_FUTURES.pop(commit_doc_id, None)
+        if workspace_dir and workspace_dir.exists():
+            shutil.rmtree(workspace_dir, ignore_errors=True)
+            logger.info("Feature demo workspace cleaned commit_id=%s", commit_doc_id)
+
+
+def enqueue_feature_demo_pipeline(commit_id: str, force: bool = False) -> dict[str, Any]:
+    """Queue feature demo pipeline: generate goal, record via browser-use, upload, save to commit."""
+    logger.info("Feature demo enqueue requested commit_id=%s force=%s", commit_id, force)
+    commit_doc = get_commit_by_id(commit_id)
+    if not commit_doc:
+        raise ValueError(f"Commit not found: {commit_id}")
+
+    existing_status = commit_doc.get("feature_demo_status")
+    if existing_status in {"running", "completed"} and not force:
+        logger.info(
+            "Feature demo enqueue skipped commit_id=%s existing_status=%s",
+            commit_id,
+            existing_status,
+        )
+        return {
+            "queued": False,
+            "skipped": True,
+            "reason": "already_running_or_completed",
+            "commit_id": commit_id,
+            "status": existing_status,
+        }
+
+    with _FEATURE_DEMO_LOCK:
+        running_future = _FEATURE_DEMO_FUTURES.get(commit_id)
+        if running_future and not running_future.done() and not force:
+            logger.info("Feature demo enqueue skipped commit_id=%s reason=already_queued", commit_id)
+            return {
+                "queued": False,
+                "skipped": True,
+                "reason": "already_queued",
+                "commit_id": commit_id,
+                "status": "running",
+            }
+
+        future = _EXECUTOR.submit(_run_feature_demo_pipeline, commit_id)
+        _FEATURE_DEMO_FUTURES[commit_id] = future
+        logger.info("Feature demo enqueued commit_id=%s", commit_id)
+
+    return {
+        "queued": True,
+        "skipped": False,
+        "commit_id": commit_id,
+        "status": "queued",
     }

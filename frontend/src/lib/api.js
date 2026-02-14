@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 export async function getRepos() {
   const res = await fetch(`${API_URL}/api/repos`);
@@ -29,6 +29,32 @@ export async function syncCommit(owner, repo, sha, branch) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `Sync failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateRepoWebsiteUrl(owner, repo, websiteUrl) {
+  const res = await fetch(`${API_URL}/api/repos/${owner}/${repo}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ website_url: websiteUrl || null }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function triggerFeatureDemo(owner, repo, sha, force = false) {
+  const res = await fetch(`${API_URL}/api/pipeline/feature-demo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ owner, repo, sha, force }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Feature demo failed: ${res.status}`);
   }
   return res.json();
 }

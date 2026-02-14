@@ -52,6 +52,12 @@ class SceneScriptSchema(BaseModel):
     scenes: list[SceneScriptSceneSchema]
 
 
+class BrowserUseGoalSchema(BaseModel):
+    """Browser use goal from commit diff."""
+
+    goal: str
+
+
 LANGUAGE_CODE_MAP = {
     "en": "en-US",
     "es": "es-ES",
@@ -184,6 +190,49 @@ def validate_scene_script(payload: dict[str, Any]) -> dict[str, Any]:
         "total_duration_sec": round(total_duration, 2),
     }
 
+def generate_browser_use_goal(commit_doc: dict[str, Any]) -> str:
+    """Generate a browser use goal from commit diff."""
+    diff_payload = _build_diff_payload(commit_doc)
+    if not diff_payload.strip():
+        raise ScriptValidationError("commit has no patch content to describe")
+
+    logger.info(
+        "Generating browser use goal commit_id=%s repo=%s files=%s",
+        commit_doc.get("id"),
+        commit_doc.get("repo_full_name"),
+        len(commit_doc.get("files", [])),
+    )
+
+    system_message = (
+        "You are a head of product engineering who defines a goal for demonstrating a new product feature release. "
+        "You are given a commit diff and you need to define a goal for demonstrating the new feature. "
+        "The goal should be a short paragraph (no more than 70 words) describing: "
+        "the steps to demonstrate the new feature (e.g. first navigate to this page) and the expected outcome. "
+        "Respond with JSON only: {\"goal\": \"your goal text\"}."
+    )
+
+    user_message = (
+        "Analyze the commit diff and produce a JSON object with a single \"goal\" field containing "
+        "a short paragraph describing the steps to demonstrate the new feature and the expected outcome.\n\n"
+        f"Unified diff:\n{diff_payload}\n"
+    )
+
+    response = invoke_llm(
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message},
+        ],
+        model=LLMModel.GEMINI_2_5_PRO,
+        json_mode=True,
+        temperature=0.2,
+        max_output_tokens=3000,
+        retries=1,
+        timeout_seconds=60.0,
+    )
+
+    parsed = response.get("json")
+    schema = BrowserUseGoalSchema.model_validate(parsed)
+    return schema.goal
 
 def generate_scene_script(commit_doc: dict[str, Any]) -> dict[str, Any]:
     """Generate a non-technical scene-by-scene script from commit diff."""
@@ -203,8 +252,9 @@ def generate_scene_script(commit_doc: dict[str, Any]) -> dict[str, Any]:
     file_paths_str = "\n".join(f"- {path}" for path in file_paths[:30])
 
     system_message = (
-        "You write short product update scripts for non-technical audiences. "
-        "Avoid all code or engineering jargon."
+        "You are a really smart talented product manager who writes short product update transcripts for non-technical audiences. "
+        "Avoid all code or engineering jargon (unless it contributes in selling that feature somehow)."
+        "This is going to be used to generate a video for a product update, so it should be engaging and interesting to watch."
     )
     user_message = (
         "Analyze the commit diff and produce JSON only.\n\n"
