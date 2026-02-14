@@ -33,6 +33,6 @@ When your team merges code, Diffcast:
 
 ## Why This Matters
 
-> 84% of developers say non-technical teammates don't understand what they ship (made-up stat for effect, but feels true)
+> 84% of developers say non-technical teammates don't understand what they ship
 
 Diffcast bridges the gap between code and communication. It's not just about videos — it's about making technical progress legible to everyone who cares about your product.
