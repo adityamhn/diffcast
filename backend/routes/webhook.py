@@ -86,27 +86,19 @@ def _process_push(payload: dict) -> int:
             if not sha:
                 continue
             try:
-                raw_diff, files = get_commit_diff(owner, name, sha)
+                raw_diff, files, commit_meta = get_commit_diff(owner, name, sha)
             except Exception as e:
                 current_app.logger.warning(f"Failed to fetch diff for {sha}: {e}")
                 continue
-
-            commit_data = c.get("commit", {})
-            author_data = commit_data.get("author", {})
-            author_info = c.get("author") or {}
 
             doc = CommitDoc(
                 sha=sha,
                 sha_short=sha[:7],
                 repo_id=repo_id(full_name),
                 repo_full_name=full_name,
-                message=commit_data.get("message", ""),
-                author={
-                    "name": author_data.get("name", author_info.get("login", "unknown")),
-                    "email": author_data.get("email", ""),
-                    "avatar_url": author_info.get("avatar_url", ""),
-                },
-                timestamp=_parse_timestamp(author_data.get("date")),
+                message=commit_meta.get("message", c.get("message", "")),
+                author=commit_meta.get("author", {"name": "unknown", "email": "", "avatar_url": ""}),
+                timestamp=_parse_timestamp(commit_meta.get("timestamp")),
                 branch=branch,
                 pr_number=None,
                 pr_url=None,

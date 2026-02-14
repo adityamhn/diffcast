@@ -1,65 +1,70 @@
-import Image from "next/image";
+import Link from "next/link";
+import { getRepos } from "@/lib/api";
 import styles from "./page.module.css";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  let data;
+  try {
+    data = await getRepos();
+  } catch (e) {
+    return (
+      <div className={styles.page}>
+        <main className={styles.main}>
+          <h1 className={styles.title}>Diffcast</h1>
+          <div className={styles.error}>
+            <p>Could not connect to the API.</p>
+            <p className={styles.errorHint}>
+              Ensure the backend is running and{" "}
+              <code>NEXT_PUBLIC_API_URL</code> is set correctly.
+            </p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const repos = data?.repos ?? [];
+
   return (
     <div className={styles.page}>
       <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.js file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
+        <header className={styles.header}>
+          <h1 className={styles.title}>Diffcast</h1>
+          <p className={styles.subtitle}>
+            Repositories tracked via GitHub webhooks
           </p>
-        </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+        </header>
+
+        {repos.length === 0 ? (
+          <div className={styles.empty}>
+            <p>No repositories yet.</p>
+            <p className={styles.emptyHint}>
+              Add a repo via <code>POST /api/repos/add</code> or trigger a
+              webhook.
+            </p>
+          </div>
+        ) : (
+          <div className={styles.grid}>
+            {repos.map((repo) => (
+              <Link
+                key={repo.id}
+                href={`/repos/${repo.full_name}`}
+                className={styles.card}
+              >
+                <div className={styles.cardHeader}>
+                  <span className={styles.repoName}>{repo.full_name}</span>
+                  <span className={styles.branch}>{repo.default_branch}</span>
+                </div>
+                <div className={styles.cardMeta}>
+                  <span>{repo.owner}</span>
+                  <span>/{repo.name}</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );

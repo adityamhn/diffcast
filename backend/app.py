@@ -1,20 +1,51 @@
 """Flask application factory."""
 
+import json
 import os
 
 from dotenv import load_dotenv
-from flask import Flask
+from flask import Flask, request
 
 # Load .env from backend directory (works regardless of cwd)
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from config import config_by_name
+
+
+class FirestoreJSONEncoder(json.JSONEncoder):
+    """Handle Firestore Timestamp and datetime in JSON responses."""
+
+    def default(self, o):
+        if hasattr(o, "isoformat"):
+            return o.isoformat()
+        # Firestore Timestamp (has .timestamp() or seconds)
+        if hasattr(o, "timestamp"):
+            from datetime import datetime
+            return datetime.fromtimestamp(o.timestamp()).isoformat()
+        if hasattr(o, "seconds"):
+            from datetime import datetime
+            return datetime.fromtimestamp(getattr(o, "seconds", 0)).isoformat()
+        return super().default(o)
 from routes import main_bp, api_bp, webhook_bp, sync_bp, repos_bp
 
 
 def create_app(config_name=None):
     """Create and configure the Flask app."""
     app = Flask(__name__)
+    app.json_encoder = FirestoreJSONEncoder
+
+    # CORS for frontend
+    @app.after_request
+    def cors_headers(response):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
+
+    @app.before_request
+    def cors_preflight():
+        if request.method == "OPTIONS":
+            return "", 204
 
     config_name = config_name or os.environ.get("FLASK_ENV", "default")
     app.config.from_object(config_by_name[config_name])

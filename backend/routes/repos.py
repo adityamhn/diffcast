@@ -25,13 +25,23 @@ def _parse_github_url(url: str) -> tuple[str, str] | None:
 repos_bp = Blueprint("repos", __name__, url_prefix="/api/repos")
 
 
+def _sanitize_repo(repo: dict) -> dict:
+    """Remove sensitive fields from repo for API response."""
+    out = dict(repo)
+    out.pop("webhook_secret", None)
+    return out
+
+
 @repos_bp.route("", methods=["GET"])
 @repos_bp.route("/", methods=["GET"])
 def list_all():
     """List all registered repos (any repo we've received webhooks from or explicitly registered)."""
     try:
         repos = list_repos()
-        return jsonify({"repos": repos, "count": len(repos)})
+        return jsonify({
+            "repos": [_sanitize_repo(r) for r in repos],
+            "count": len(repos),
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

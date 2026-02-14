@@ -1,6 +1,9 @@
 """Firebase Firestore service for storing webhook and commit data."""
 
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 from datetime import datetime
 from typing import Optional
 
@@ -25,7 +28,10 @@ def _get_db():
     import firebase_admin
     from firebase_admin import credentials, firestore
 
-    if not firebase_admin._apps:
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        # No app exists yet, initialize
         cred_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH") or os.environ.get(
             "GOOGLE_APPLICATION_CREDENTIALS"
         )
@@ -97,16 +103,54 @@ def list_repos() -> list[dict]:
     return [{"id": d.id, **d.to_dict()} for d in docs]
 
 
+def _timestamp_sort_key(doc_dict: dict):
+    """Extract sortable timestamp from commit doc (for fallback sort)."""
+    ts = doc_dict.get("created_at") or doc_dict.get("timestamp")
+    if ts is None:
+        return datetime.min
+    # Firestore Timestamp has .timestamp() or .seconds
+    if hasattr(ts, "timestamp"):
+        return datetime.fromtimestamp(ts.timestamp())
+    if hasattr(ts, "seconds"):
+        return datetime.fromtimestamp(getattr(ts, "seconds", 0))
+    return ts
+
+
 def list_commits(repo_full_name: str, limit: int = 50) -> list[dict]:
-    """List commits for a repo, newest first."""
+    """List commits for a repo, newest first. Tries both owner/repo and owner_repo formats."""
     db = _get_db()
-    query = (
-        db.collection("commits")
-        .where("repo_full_name", "==", repo_full_name)
-        .order_by("created_at", direction="DESCENDING")
-        .limit(limit)
-    )
-    return [{"id": d.id, **d.to_dict()} for d in query.stream()]
+
+    from google.cloud.firestore_v1.base_query import FieldFilter
+
+    def _query(repofield: str):
+        eq_filter = FieldFilter("repo_full_name", "==", repofield)
+        try:
+            query = (
+                db.collection("commits")
+                .where(filter=eq_filter)
+                .order_by("created_at", direction="DESCENDING")
+                .limit(limit)
+            )
+            return [{"id": d.id, **d.to_dict()} for d in query.stream()]
+        except Exception:
+            query = (
+                db.collection("commits")
+                .where(filter=eq_filter)
+                .limit(limit * 2)
+            )
+            docs = [{"id": d.id, **d.to_dict()} for d in query.stream()]
+            docs.sort(key=_timestamp_sort_key, reverse=True)
+            return docs[:limit]
+
+    # Try owner/repo first (canonical format)
+    result = _query(repo_full_name)
+    if result:
+        return result
+    # Fallback: try owner_repo (in case stored with underscore)
+    alt = repo_full_name.replace("/", "_")
+    if alt != repo_full_name:
+        return _query(alt)
+    return result
 
 
 def get_all_repo_secrets() -> list[tuple[str, str]]:
@@ -114,6 +158,16 @@ def get_all_repo_secrets() -> list[tuple[str, str]]:
     db = _get_db()
     docs = db.collection("repos").stream()
     return [(d.id, s) for d in docs for s in [d.to_dict().get("webhook_secret")] if s]
+
+
+def get_commit(repo_full_name: str, sha: str) -> Optional[dict]:
+    """Get existing commit by repo and sha."""
+    db = _get_db()
+    cid = commit_id(repo_full_name, sha)
+    doc = db.collection("commits").document(cid).get()
+    if not doc.exists:
+        return None
+    return {"id": doc.id, **doc.to_dict()}
 
 
 def get_repo(repo_full_name: str) -> Optional[dict]:

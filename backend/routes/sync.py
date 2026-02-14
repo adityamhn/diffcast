@@ -5,7 +5,7 @@ import os
 from flask import Blueprint, request, jsonify
 
 from firebase_schema import CommitDoc, repo_id
-from services import get_commit_diff, get_compare_diff, store_commit, store_repo
+from services import get_commit, get_commit_diff, get_compare_diff, store_commit, store_repo
 
 sync_bp = Blueprint("sync", __name__, url_prefix="/api/sync")
 
@@ -28,46 +28,37 @@ def sync_commit():
     owner = data.get("owner")
     repo = data.get("repo")
     sha = data.get("sha")
+    branch = data.get("branch")  # Optional: preserve when re-syncing
     if not all([owner, repo, sha]):
         return jsonify({"error": "Missing owner, repo, or sha"}), 400
 
-    if not os.environ.get("GITHUB_TOKEN"):
-        return jsonify({"error": "GITHUB_TOKEN required for sync"}), 503
-
+    # GITHUB_TOKEN optional for public repos; recommended for higher rate limits (5000 vs 60/hr)
     try:
-        raw_diff, files = get_commit_diff(owner, repo, sha)
+        raw_diff, files, commit_meta = get_commit_diff(owner, repo, sha)
     except Exception as e:
         return jsonify({"error": str(e)}), 502
 
     full_name = f"{owner}/{repo}"
     store_repo(full_name=full_name, owner=owner, name=repo)
 
-    # Fetch commit details for author/timestamp
-    import requests
-    r = requests.get(
-        f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}",
-        headers={"Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN')}", "Accept": "application/vnd.github.v3+json"},
-        timeout=30,
-    )
-    r.raise_for_status()
-    c = r.json()
-    commit_data = c.get("commit", {})
-    author_data = commit_data.get("author", {})
-    author_info = c.get("author") or {}
+    full_sha = commit_meta.get("sha", sha)
+    # Preserve existing branch if it has a real value (not "unknown")
+    existing = get_commit(full_name, full_sha)
+    existing_branch = existing.get("branch") if existing else None
+    if existing_branch and existing_branch != "unknown":
+        branch = existing_branch
+    else:
+        branch = branch or commit_meta.get("branch") or "unknown"
 
     doc = CommitDoc(
-        sha=c["sha"],
-        sha_short=c["sha"][:7],
+        sha=full_sha,
+        sha_short=full_sha[:7],
         repo_id=repo_id(full_name),
         repo_full_name=full_name,
-        message=commit_data.get("message", ""),
-        author={
-            "name": author_data.get("name", author_info.get("login", "unknown")),
-            "email": author_data.get("email", ""),
-            "avatar_url": author_info.get("avatar_url", ""),
-        },
-        timestamp=_parse_ts(author_data.get("date")) or __import__("datetime").datetime.utcnow(),
-        branch="unknown",
+        message=commit_meta.get("message", ""),
+        author=commit_meta.get("author", {"name": "unknown", "email": "", "avatar_url": ""}),
+        timestamp=_parse_ts(commit_meta.get("timestamp")) or __import__("datetime").datetime.utcnow(),
+        branch=branch,
         pr_number=None,
         pr_url=None,
         pr_title=None,
@@ -93,13 +84,14 @@ def sync_pr():
     if not all([owner, repo, pr_number]):
         return jsonify({"error": "Missing owner, repo, or pr_number"}), 400
 
-    if not os.environ.get("GITHUB_TOKEN"):
-        return jsonify({"error": "GITHUB_TOKEN required for sync"}), 503
-
+    # GITHUB_TOKEN optional for public repos; recommended for higher rate limits
     import requests
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if token := os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
     r = requests.get(
         f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}",
-        headers={"Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN')}", "Accept": "application/vnd.github.v3+json"},
+        headers=headers,
         timeout=30,
     )
     r.raise_for_status()

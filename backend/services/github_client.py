@@ -46,10 +46,11 @@ def get_pr_diff(owner: str, repo: str, pr_number: int) -> tuple[str, list[dict]]
     return raw_diff, files
 
 
-def get_commit_diff(owner: str, repo: str, sha: str) -> tuple[str, list[dict]]:
+def get_commit_diff(owner: str, repo: str, sha: str) -> tuple[str, list[dict], dict]:
     """
     Fetch single commit diff and file changes.
-    Returns (raw_diff_string, files_list).
+    Returns (raw_diff_string, files_list, commit_meta).
+    commit_meta has: message, author { name, email, avatar_url }, timestamp
     """
     url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
     r = _get(url)
@@ -67,16 +68,30 @@ def get_commit_diff(owner: str, repo: str, sha: str) -> tuple[str, list[dict]]:
         })
 
     # Raw diff
-    diff_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
     diff_r = requests.get(
-        diff_url,
+        url,
         headers={**_headers(), "Accept": "application/vnd.github.v3.diff"},
         timeout=30,
     )
     diff_r.raise_for_status()
     raw_diff = diff_r.text
 
-    return raw_diff, files
+    # Extract author from API response (has avatar_url; webhook doesn't)
+    commit_data = data.get("commit", {})
+    author_data = commit_data.get("author", {})
+    author_info = data.get("author") or {}
+    commit_meta = {
+        "sha": data.get("sha", sha),
+        "message": commit_data.get("message", ""),
+        "author": {
+            "name": author_data.get("name", author_info.get("login", "unknown")),
+            "email": author_data.get("email", ""),
+            "avatar_url": author_info.get("avatar_url", ""),
+        },
+        "timestamp": author_data.get("date"),
+    }
+
+    return raw_diff, files, commit_meta
 
 
 def get_compare_diff(owner: str, repo: str, base: str, head: str) -> list[dict]:
@@ -92,20 +107,13 @@ def get_compare_diff(owner: str, repo: str, base: str, head: str) -> list[dict]:
     commits = []
     for c in data.get("commits", []):
         sha = c["sha"]
-        raw_diff, files = get_commit_diff(owner, repo, sha)
-        commit_data = c.get("commit", {})
-        author = commit_data.get("author", {})
-        author_info = c.get("author") or {}
+        raw_diff, files, commit_meta = get_commit_diff(owner, repo, sha)
         commits.append({
             "sha": sha,
             "sha_short": sha[:7],
-            "message": commit_data.get("message", ""),
-            "author": {
-                "name": author.get("name", author_info.get("login", "unknown")),
-                "email": author.get("email", ""),
-                "avatar_url": author_info.get("avatar_url", ""),
-            },
-            "timestamp": author.get("date"),
+            "message": commit_meta["message"],
+            "author": commit_meta["author"],
+            "timestamp": commit_meta["timestamp"],
             "files": files,
             "raw_diff": raw_diff,
         })
