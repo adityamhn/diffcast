@@ -71,6 +71,41 @@ Audit log of webhook deliveries. `eventId` = GitHub `X-GitHub-Delivery` header.
 | error | string \| null | Error message if failed |
 | created_at | timestamp | When received |
 
+---
+
+### `videos/{videoId}`
+
+Per-commit media pipeline status and generated outputs. `videoId` = `{repoId}_{sha_short}`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| video_id | string | Video document id |
+| commit_id | string | Linked commit document id |
+| repo_full_name | string | e.g. `octocat/hello-world` |
+| sha | string | Full 40-char commit SHA |
+| sha_short | string | Short SHA |
+| status | string | `queued`, `running`, `completed`, `failed` |
+| stage | string | `script`, `video`, `voiceover`, `captions`, `upload`, `done`, `error` |
+| error | string \| null | Top-level failure message |
+| languages_requested | array | Requested language codes |
+| base_video_url | string \| null | URL for rendered base video |
+| script | map \| null | Generated non-technical script and scene data |
+| tracks | map | Per-language metadata keyed by language code |
+| created_at | timestamp | First created |
+| updated_at | timestamp | Last pipeline update |
+| completed_at | timestamp \| null | Final completion timestamp |
+
+**tracks** map values:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| audio_url | string \| null | URL for generated voiceover MP3 |
+| captions_url | string \| null | URL for generated SRT captions |
+| voice_script | string \| null | Localized narration text |
+| duration_sec | number \| null | Estimated track duration |
+| status | string | `completed` or `failed` |
+| error | string \| null | Track-level failure message |
+
 ## Indexes (if needed)
 
 For querying commits by repo:
@@ -82,6 +117,11 @@ For webhook audit:
 
 - **Collection**: `webhook_events`
 - **Fields**: `created_at` (Descending)
+
+For querying generated videos by repo:
+
+- **Collection**: `videos`
+- **Fields**: `repo_full_name` (Ascending), `created_at` (Descending)
 
 ## Security Rules (Firestore)
 
@@ -100,6 +140,10 @@ service cloud.firestore {
       allow write: if false;
     }
     match /webhook_events/{eventId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /videos/{videoId} {
       allow read: if true;
       allow write: if false;
     }

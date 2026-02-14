@@ -13,4 +13,6 @@ dependencies = [
     "browser-use[video]==0.11.9",
     "playwright>=1.58.0",
     "langchain-google-genai>=4.2.0",
+    "google-cloud-texttospeech>=2.16.0",
+    "Pillow>=10.0.0",
 ]

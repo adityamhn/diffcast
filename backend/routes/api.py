@@ -17,8 +17,11 @@ def index():
                 "repos_add": "POST /api/repos/add (repo_url + webhook_secret)",
                 "repos_register": "POST /api/repos/register",
                 "repos_commits": "GET /api/repos/<owner>/<repo>/commits",
+                "repos_videos": "GET /api/repos/<owner>/<repo>/videos",
                 "sync_commit": "POST /api/sync/commit",
                 "sync_pr": "POST /api/sync/pr",
+                "pipeline_commit": "POST /api/pipeline/commit",
+                "video_status": "GET /api/videos/<video_id>",
             },
             "webhook": "POST /webhook/github (multi-repo)",
         }

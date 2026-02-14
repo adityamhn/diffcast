@@ -102,8 +102,9 @@ def _build_client(api_key: str, timeout_seconds: float) -> Any:
             "google-genai is required but not installed. Install `google-genai`."
         ) from exc
 
+    timeout_ms = max(1, int(timeout_seconds * 1000))
     try:
-        return genai.Client(api_key=api_key, http_options={"timeout": timeout_seconds})
+        return genai.Client(api_key=api_key, http_options={"timeout": timeout_ms})
     except TypeError:
         return genai.Client(api_key=api_key)
 
@@ -221,6 +222,21 @@ def _parse_json_output(text: str) -> dict[str, Any] | list[Any]:
     return parsed
 
 
+def _coerce_parsed_json(parsed: Any) -> dict[str, Any] | list[Any]:
+    """Normalize SDK parsed payload into dict/list JSON values."""
+    if hasattr(parsed, "model_dump"):
+        payload = parsed.model_dump()
+    else:
+        payload = parsed
+
+    if not isinstance(payload, (dict, list)):
+        raise LLMResponseFormatError(
+            "json_mode=True requires parsed response JSON to be an object or array"
+        )
+
+    return payload
+
+
 def _is_transient_error(error: Exception) -> bool:
     """Best-effort classifier for retryable transport/provider errors."""
     if isinstance(error, (TimeoutError, ConnectionError)):
@@ -249,6 +265,7 @@ def invoke_llm(
     messages: list[dict[str, str]],
     model: LLMModel = LLMModel.GEMINI_2_0_FLASH,
     json_mode: bool = False,
+    response_schema: Any | None = None,
     temperature: float = 0.2,
     max_output_tokens: int | None = None,
     retries: int = 1,
@@ -273,8 +290,10 @@ def invoke_llm(
     generation_config: dict[str, Any] = {"temperature": temperature}
     if max_output_tokens is not None:
         generation_config["max_output_tokens"] = max_output_tokens
-    if json_mode:
+    if json_mode or response_schema is not None:
         generation_config["response_mime_type"] = "application/json"
+    if response_schema is not None:
+        generation_config["response_schema"] = response_schema
 
     max_attempts = retries + 1
     attempt = 0
@@ -289,10 +308,21 @@ def invoke_llm(
                 generation_config=generation_config,
             )
             text = _extract_response_text(response)
-            if not text:
-                raise LLMRequestError("Gemini returned an empty response")
+            parsed_json: dict[str, Any] | list[Any] | None = None
+            if json_mode and response_schema is not None:
+                parsed = getattr(response, "parsed", None)
+                if parsed is not None:
+                    parsed_json = _coerce_parsed_json(parsed)
 
-            parsed_json = _parse_json_output(text) if json_mode else None
+            if json_mode:
+                if parsed_json is None:
+                    if not text:
+                        raise LLMRequestError("Gemini returned an empty response")
+                    parsed_json = _parse_json_output(text)
+                if not text:
+                    text = json.dumps(parsed_json)
+            elif not text:
+                raise LLMRequestError("Gemini returned an empty response")
 
             return {
                 "text": text,

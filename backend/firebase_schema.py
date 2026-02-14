@@ -42,6 +42,28 @@ webhook_events/{eventId}
   - commits_stored: int
   - error: str | null
   - created_at: timestamp
+
+videos/{videoId}
+  videoId: "{repoId}_{sha}" (same shape as commitId)
+  - video_id: str
+  - commit_id: str
+  - repo_full_name: str
+  - sha: str
+  - sha_short: str
+  - status: str  # queued, running, completed, failed
+  - stage: str  # script, video, voiceover, captions, upload, done, error
+  - error: str | null
+  - languages_requested: list[str]
+  - base_video_url: str | null
+  - script: { title, feature_summary, scenes[], total_duration_sec } | null
+  - tracks: {
+      "<lang>": {
+        audio_url, captions_url, voice_script, duration_sec, status, error
+      }
+    }
+  - created_at: timestamp
+  - updated_at: timestamp
+  - completed_at: timestamp | null
 """
 
 from dataclasses import dataclass, field
@@ -100,6 +122,25 @@ class WebhookEventDoc:
     created_at: Optional[datetime] = None
 
 
+@dataclass
+class VideoDoc:
+    video_id: str
+    commit_id: str
+    repo_full_name: str
+    sha: str
+    sha_short: str
+    status: str
+    stage: str
+    error: Optional[str] = None
+    languages_requested: list[str] = field(default_factory=list)
+    base_video_url: Optional[str] = None
+    script: Optional[dict] = None
+    tracks: dict = field(default_factory=dict)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
 def commit_id(repo_full_name: str, sha: str) -> str:
     """Generate unique commit document ID."""
     repo_id = repo_full_name.replace("/", "_")
@@ -109,3 +150,8 @@ def commit_id(repo_full_name: str, sha: str) -> str:
 def repo_id(full_name: str) -> str:
     """Generate repo document ID."""
     return full_name.replace("/", "_")
+
+
+def video_id(repo_full_name: str, sha: str) -> str:
+    """Generate video document ID from repo and commit SHA."""
+    return commit_id(repo_full_name, sha)

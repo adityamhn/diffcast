@@ -10,6 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from pydantic import BaseModel
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -89,8 +91,6 @@ class InvokeLLMTests(unittest.TestCase):
                     json_mode=True,
                 )
 
-                print(result)
-
         self.assertEqual(result["text"], '{"steps":["click add","save"]}')
         self.assertEqual(result["json"], {"steps": ["click add", "save"]})
         self.assertEqual(result["usage"]["input_tokens"], 12)
@@ -109,6 +109,29 @@ class InvokeLLMTests(unittest.TestCase):
             with patch.object(invoke_llm_module, "_build_client", return_value=client):
                 with self.assertRaises(LLMResponseFormatError):
                     invoke_llm(self.messages, json_mode=True)
+
+    def test_response_schema_uses_parsed_payload(self) -> None:
+        class StepsSchema(BaseModel):
+            steps: list[str]
+
+        client = Mock()
+        client.models.generate_content.return_value = SimpleNamespace(
+            text="not-json-at-all",
+            parsed=StepsSchema(steps=["click add", "save"]),
+        )
+
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+            with patch.object(invoke_llm_module, "_build_client", return_value=client):
+                result = invoke_llm(
+                    self.messages,
+                    json_mode=True,
+                    response_schema=StepsSchema,
+                )
+
+        self.assertEqual(result["json"], {"steps": ["click add", "save"]})
+        kwargs = client.models.generate_content.call_args.kwargs
+        self.assertEqual(kwargs["config"]["response_mime_type"], "application/json")
+        self.assertEqual(kwargs["config"]["response_schema"], StepsSchema)
 
     def test_retry_transient_then_success(self) -> None:
         client = Mock()
@@ -148,9 +171,9 @@ class InvokeLLMTests(unittest.TestCase):
             with patch.object(invoke_llm_module, "_build_client", return_value=client):
                 result = invoke_llm(self.messages)
 
-        self.assertEqual(result["usage"]["input_tokens"], None)
-        self.assertEqual(result["usage"]["output_tokens"], None)
-        self.assertEqual(result["usage"]["total_tokens"], None)
+        self.assertIsNone(result["usage"]["input_tokens"])
+        self.assertIsNone(result["usage"]["output_tokens"])
+        self.assertIsNone(result["usage"]["total_tokens"])
 
 
 if __name__ == "__main__":

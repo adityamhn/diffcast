@@ -2,6 +2,7 @@
 
 import json
 import os
+import logging
 
 from dotenv import load_dotenv
 from flask import Flask, request
@@ -10,8 +11,8 @@ from flask import Flask, request
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from config import config_by_name
-
-
+from utils.logging_config import configure_logging
+from routes import main_bp, api_bp, webhook_bp, sync_bp, repos_bp, pipeline_bp
 class FirestoreJSONEncoder(json.JSONEncoder):
     """Handle Firestore Timestamp and datetime in JSON responses."""
 
@@ -26,11 +27,11 @@ class FirestoreJSONEncoder(json.JSONEncoder):
             from datetime import datetime
             return datetime.fromtimestamp(getattr(o, "seconds", 0)).isoformat()
         return super().default(o)
-from routes import main_bp, api_bp, webhook_bp, sync_bp, repos_bp
 
 
 def create_app(config_name=None):
     """Create and configure the Flask app."""
+    configure_logging()
     app = Flask(__name__)
     app.json_encoder = FirestoreJSONEncoder
 
@@ -56,6 +57,13 @@ def create_app(config_name=None):
     app.register_blueprint(webhook_bp)
     app.register_blueprint(sync_bp)
     app.register_blueprint(repos_bp)
+    app.register_blueprint(pipeline_bp)
+
+    logging.getLogger(__name__).info(
+        "Flask app initialized with config=%s debug=%s",
+        config_name,
+        app.config.get("DEBUG"),
+    )
 
     return app
 
@@ -64,4 +72,4 @@ def create_app(config_name=None):
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=8080)

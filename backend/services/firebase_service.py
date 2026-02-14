@@ -5,14 +5,17 @@ import os
 
 logger = logging.getLogger(__name__)
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from firebase_schema import (
     CommitDoc,
     WebhookEventDoc,
     commit_id,
     repo_id,
+    video_id,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_cred_path(cred_path: str) -> str:
@@ -35,18 +38,24 @@ def _get_db():
         cred_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH") or os.environ.get(
             "GOOGLE_APPLICATION_CREDENTIALS"
         )
+        init_options: dict[str, str] = {}
+        storage_bucket = os.environ.get("FIREBASE_STORAGE_BUCKET")
+        if storage_bucket:
+            init_options["storageBucket"] = storage_bucket
+        opts = init_options or None
         if cred_path:
             resolved = _resolve_cred_path(cred_path)
             if os.path.exists(resolved):
                 cred = credentials.Certificate(resolved)
-                firebase_admin.initialize_app(cred)
+                firebase_admin.initialize_app(cred, options=opts)
             else:
                 raise FileNotFoundError(
                     f"Firebase credentials not found at {resolved} (from {cred_path}). "
                     "Set FIREBASE_SERVICE_ACCOUNT_PATH to the path of your service account JSON."
                 )
         else:
-            firebase_admin.initialize_app()
+            # For local dev: use default credentials (gcloud auth application-default login)
+            firebase_admin.initialize_app(options=opts)
     return firestore.client()
 
 
@@ -153,6 +162,16 @@ def list_commits(repo_full_name: str, limit: int = 50) -> list[dict]:
     return result
 
 
+def get_commit_by_id(commit_doc_id: str) -> Optional[dict]:
+    """Fetch a single commit document by commit document ID."""
+    db = _get_db()
+    doc = db.collection("commits").document(commit_doc_id).get()
+    if not doc.exists:
+        logger.info("Commit not found commit_id=%s", commit_doc_id)
+        return None
+    return {"id": doc.id, **doc.to_dict()}
+
+
 def get_all_repo_secrets() -> list[tuple[str, str]]:
     """Return (repo_id, webhook_secret) for repos that have a per-repo secret."""
     db = _get_db()
@@ -210,6 +229,71 @@ def store_commit(commit: CommitDoc) -> str:
     data["created_at"] = data.get("created_at") or datetime.utcnow()
     db.collection("commits").document(cid).set(data, merge=True)
     return cid
+
+
+def upsert_video_doc(video_doc_id: str, payload: dict[str, Any]) -> str:
+    """Create or update a pipeline video document."""
+    db = _get_db()
+    ref = db.collection("videos").document(video_doc_id)
+    now = datetime.utcnow()
+    existing = ref.get()
+    payload = {**payload}
+    if not existing.exists:
+        payload.setdefault("created_at", now)
+    payload["updated_at"] = now
+    ref.set(payload, merge=True)
+    logger.info("Upserted video doc video_id=%s status=%s stage=%s", video_doc_id, payload.get("status"), payload.get("stage"))
+    return video_doc_id
+
+
+def update_video_status(
+    video_doc_id: str,
+    status: str,
+    stage: str,
+    error: Optional[str] = None,
+    extra_fields: Optional[dict[str, Any]] = None,
+) -> str:
+    """Update status/stage of a pipeline video document."""
+    payload: dict[str, Any] = {
+        "status": status,
+        "stage": stage,
+        "error": error,
+        "updated_at": datetime.utcnow(),
+    }
+    if status in {"completed", "failed"}:
+        payload["completed_at"] = datetime.utcnow()
+    if extra_fields:
+        payload.update(extra_fields)
+    return upsert_video_doc(video_doc_id, payload)
+
+
+def get_video(video_doc_id: str) -> Optional[dict]:
+    """Fetch a generated video pipeline document by ID."""
+    db = _get_db()
+    doc = db.collection("videos").document(video_doc_id).get()
+    if not doc.exists:
+        logger.info("Video doc not found video_id=%s", video_doc_id)
+        return None
+    return {"id": doc.id, **doc.to_dict()}
+
+
+def list_videos(
+    repo_full_name: str,
+    limit: int = 20,
+    status_filter: Optional[str] = None,
+) -> list[dict]:
+    """List generated video documents for a repo, newest first."""
+    db = _get_db()
+    query = db.collection("videos").where("repo_full_name", "==", repo_full_name)
+    if status_filter:
+        query = query.where("status", "==", status_filter)
+    query = query.order_by("created_at", direction="DESCENDING").limit(limit)
+    return [{"id": d.id, **d.to_dict()} for d in query.stream()]
+
+
+def build_video_doc_id(repo_full_name: str, sha: str) -> str:
+    """Generate video document ID from repo and commit SHA."""
+    return video_id(repo_full_name, sha)
 
 
 def store_webhook_event(event: WebhookEventDoc) -> str:

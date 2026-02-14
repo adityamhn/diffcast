@@ -7,7 +7,7 @@ load_dotenv()
 
 class FeatureVideoRecorder:
     def __init__(self):
-        self.llm = ChatGoogle(model="gemini-2.5-flash-lite", temperature=0.3)
+        self.llm = ChatGoogle(model="gemini-2.5-flash", temperature=0.3)
 
     async def record_feature_demo(
         self,
@@ -75,6 +75,6 @@ class FeatureVideoRecorder:
 if __name__ == "__main__":
     asyncio.run(
         FeatureVideoRecorder().record_feature_demo(
-            "https://bugbase.ai", "Add a new feature which includes new filters, showcase the new filters"
+            "https://ricky-monty.netlify.app/", "Add a new feature which includes new filters, showcase the new filters"
         )
     )
