@@ -159,7 +159,8 @@ def generate_veo_clip(
         duration_sec: Desired duration (will snap to 4, 6, or 8)
         aspect_ratio: Video aspect ratio (default 16:9)
         reference_image_path: Optional path to a reference image (snapshot) that
-            will be used as a visual reference for the generated video
+            will be used as a visual reference for the generated video.
+            NOTE: Reference images require duration=8 seconds per Veo 3.1 API docs.
 
     Returns:
         Dict with path, model, duration_sec, prompt, and has_reference_image
@@ -175,6 +176,16 @@ def generate_veo_clip(
     actual_duration = _snap_duration(int(duration_sec))
 
     has_reference = reference_image_path is not None
+
+    # Per Veo 3.1 docs: reference images require exactly 8 seconds duration
+    # https://ai.google.dev/gemini-api/docs/video
+    if has_reference and actual_duration != 8:
+        logger.info(
+            "Reference images require 8s duration, adjusting from %ds to 8s",
+            actual_duration,
+        )
+        actual_duration = 8
+
     logger.info(
         "Generating Veo clip model=%s requested_sec=%s actual_sec=%s has_reference=%s",
         model,
@@ -185,27 +196,49 @@ def generate_veo_clip(
     logger.info("Veo prompt (clip): %s", prompt[:500] + ("..." if len(prompt) > 500 else ""))
     print(f"[Veo] Prompt sent:\n{prompt}\n")
 
-    try:
+    # Check env flag to disable reference images (useful for regional restrictions)
+    use_reference_images = os.environ.get("PIPELINE_VEO_USE_REFERENCE_IMAGES", "true").lower() in ("true", "1", "yes")
+    if has_reference and not use_reference_images:
+        logger.info("Reference images disabled via PIPELINE_VEO_USE_REFERENCE_IMAGES=false")
+        has_reference = False
+        reference_image_path = None
+
+    def _start_generation(include_reference: bool) -> Any:
+        """Start a Veo generation, optionally with reference images."""
         from google.genai import types
 
-        # Build config with optional reference images.
-        # Note: person_generation is not included - "allow_all" is not supported by Veo 3.1.
         config_kwargs: dict[str, Any] = {
             "duration_seconds": actual_duration,
             "aspect_ratio": aspect_ratio,
         }
 
-        if reference_image_path:
+        if include_reference and reference_image_path:
             reference = _load_reference_image(reference_image_path)
             config_kwargs["reference_images"] = [reference]
 
-        operation = client.models.generate_videos(
+        return client.models.generate_videos(
             model=model,
             prompt=prompt,
             config=types.GenerateVideosConfig(**config_kwargs),
         )
+
+    try:
+        operation = _start_generation(include_reference=has_reference)
     except Exception as exc:
-        raise GeminiVideoError(f"Veo request failed: {exc}") from exc
+        exc_str = str(exc).lower()
+        # If reference images caused INVALID_ARGUMENT, retry without them
+        if has_reference and ("invalid_argument" in exc_str or "not supported" in exc_str):
+            logger.warning(
+                "Reference images not supported (possibly regional restriction), retrying without: %s",
+                exc,
+            )
+            has_reference = False
+            try:
+                operation = _start_generation(include_reference=False)
+            except Exception as retry_exc:
+                raise GeminiVideoError(f"Veo request failed (retry without ref): {retry_exc}") from retry_exc
+        else:
+            raise GeminiVideoError(f"Veo request failed: {exc}") from exc
 
     # Poll the operation status until the video is ready.
     # The operation object must be refreshed via client.operations.get().

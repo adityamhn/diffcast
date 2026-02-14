@@ -409,7 +409,7 @@ front-on view of the monitor with soft neutral studio lighting. Style: photoreal
       )}
 
       <section className={styles.section}>
-        <h2 className={styles.sectionTitle}>Demo goal</h2>
+        <h2 className={styles.sectionTitle}>How to use</h2>
         {goal ? (
           <p className={styles.goal}>{goal}</p>
         ) : (
