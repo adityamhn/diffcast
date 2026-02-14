@@ -12,6 +12,14 @@ from firebase_schema import (
 )
 
 
+def _resolve_cred_path(cred_path: str) -> str:
+    """Resolve relative paths against the backend directory."""
+    if os.path.isabs(cred_path):
+        return cred_path
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(backend_dir, cred_path)
+
+
 def _get_db():
     """Lazy-init Firestore. Requires GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_SERVICE_ACCOUNT_PATH."""
     import firebase_admin
@@ -21,11 +29,17 @@ def _get_db():
         cred_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH") or os.environ.get(
             "GOOGLE_APPLICATION_CREDENTIALS"
         )
-        if cred_path and os.path.exists(cred_path):
-            cred = credentials.Certificate(cred_path)
-            firebase_admin.initialize_app(cred)
+        if cred_path:
+            resolved = _resolve_cred_path(cred_path)
+            if os.path.exists(resolved):
+                cred = credentials.Certificate(resolved)
+                firebase_admin.initialize_app(cred)
+            else:
+                raise FileNotFoundError(
+                    f"Firebase credentials not found at {resolved} (from {cred_path}). "
+                    "Set FIREBASE_SERVICE_ACCOUNT_PATH to the path of your service account JSON."
+                )
         else:
-            # For local dev: use default credentials (gcloud auth application-default login)
             firebase_admin.initialize_app()
     return firestore.client()
 

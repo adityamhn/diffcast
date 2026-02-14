@@ -1,7 +1,12 @@
 """Flask application factory."""
 
 import os
+
+from dotenv import load_dotenv
 from flask import Flask
+
+# Load .env from backend directory (works regardless of cwd)
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from config import config_by_name
 from routes import main_bp, api_bp, webhook_bp, sync_bp, repos_bp
