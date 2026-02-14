@@ -15,6 +15,7 @@ from services import (
     get_commit_diff,
     get_video,
     list_videos,
+    update_commit_goal,
 )
 
 pipeline_bp = Blueprint("pipeline", __name__, url_prefix="/api")
@@ -130,6 +131,7 @@ def trigger_browser_use_goal():
         )
 
     commit_doc = get_commit_by_id(commit_doc_id)
+    commit_exists_in_firestore = commit_doc is not None
     if not commit_doc and owner and repo and sha:
         try:
             _raw_diff, files, _commit_meta = get_commit_diff(
@@ -157,6 +159,9 @@ def trigger_browser_use_goal():
     except Exception as exc:
         logger.exception("Browser use goal generation failed commit_id=%s", commit_doc_id)
         return jsonify({"error": str(exc)}), 500
+
+    if commit_exists_in_firestore:
+        update_commit_goal(commit_doc_id, result)
 
     return jsonify({"ok": True, "browser_use_goal": result}), 200
 

@@ -5,7 +5,17 @@ import re
 from flask import Blueprint, request, jsonify
 
 from firebase_schema import commit_id
-from services import list_repos, list_commits, get_commit_by_id, get_repo, register_repo, update_repo_website_url
+from services import (
+    list_repos,
+    list_commits,
+    get_commit_by_id,
+    get_repo,
+    register_repo,
+    update_repo_website_url,
+    build_video_doc_id,
+    get_video,
+)
+from services.media_generation_service import answer_commit_question
 
 
 def _parse_github_url(url: str) -> tuple[str, str] | None:
@@ -99,6 +109,40 @@ def register():
             website_url=website_url,
         )
         return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@repos_bp.route("/<path:repo_path>/commits/<sha>/chat", methods=["POST"])
+def commit_chat(repo_path: str, sha: str):
+    """
+    Chat about a commit - answer questions for non-technical users.
+    Body: { "messages": [{ "role": "user"|"assistant", "content": "..." }] }
+    """
+    if "/" not in repo_path:
+        return jsonify({"error": "Use owner/repo format"}), 400
+    cid = commit_id(repo_path, sha)
+    commit = get_commit_by_id(cid)
+    if not commit:
+        return jsonify({"error": "Commit not found"}), 404
+
+    data = request.get_json() or {}
+    messages = data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return jsonify({"error": "messages must be a non-empty array"}), 400
+
+    # Validate message shape
+    for i, m in enumerate(messages):
+        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+            return jsonify({"error": f"messages[{i}] must have role 'user' or 'assistant'"}), 400
+        if not isinstance(m.get("content"), str) or not str(m.get("content", "")).strip():
+            return jsonify({"error": f"messages[{i}] must have non-empty content"}), 400
+
+    try:
+        video_doc_id = build_video_doc_id(repo_path, commit.get("sha", sha))
+        video = get_video(video_doc_id)
+        answer = answer_commit_question(commit, video, messages)
+        return jsonify({"answer": answer})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

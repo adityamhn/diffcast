@@ -1,3 +1,32 @@
+.layout {
+  display: flex;
+  gap: 32px;
+  align-items: flex-start;
+}
+
+.mainColumn {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar {
+  flex-shrink: 0;
+  width: 360px;
+  position: sticky;
+  top: 24px;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    position: static;
+  }
+}
+
 .content {
   display: flex;
   flex-direction: column;

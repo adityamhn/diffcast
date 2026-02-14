@@ -3,6 +3,7 @@
 from .firebase_service import (
     build_video_doc_id,
     get_commit_by_id,
+    update_commit_goal,
     get_all_repo_secrets,
     get_commit,
     get_repo,
@@ -25,6 +26,7 @@ from .pipeline_service import enqueue_commit_pipeline, enqueue_feature_demo_pipe
 
 __all__ = [
     "build_video_doc_id",
+    "update_commit_goal",
     "enqueue_commit_pipeline",
     "enqueue_feature_demo_pipeline",
     "get_commit_by_id",

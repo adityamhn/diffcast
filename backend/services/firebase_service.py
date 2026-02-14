@@ -249,6 +249,15 @@ def store_commit(commit: CommitDoc) -> str:
     return cid
 
 
+def update_commit_goal(commit_doc_id: str, goal: str) -> None:
+    """Update commit document with feature demo goal. Persists to Firestore."""
+    db = _get_db()
+    db.collection("commits").document(commit_doc_id).set(
+        {"feature_demo_goal": goal}, merge=True
+    )
+    logger.info("Updated commit goal commit_id=%s", commit_doc_id)
+
+
 def update_commit_feature_demo(
     commit_doc_id: str,
     status: str,

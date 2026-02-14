@@ -96,3 +96,19 @@ export async function getBrowserUseGoal(owner, repo, sha) {
   }
   return res.json();
 }
+
+export async function chatCommit(owner, repo, sha, messages) {
+  const res = await fetch(
+    `${API_URL}/api/repos/${owner}/${repo}/commits/${sha}/chat`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Chat failed: ${res.status}`);
+  }
+  return res.json();
+}

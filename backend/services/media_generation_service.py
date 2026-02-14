@@ -129,6 +129,99 @@ def _contains_jargon(text: str) -> bool:
     return bool(JARGON_PATTERN.search(text or ""))
 
 
+def _build_commit_chat_context(commit_doc: dict[str, Any], video_doc: dict[str, Any] | None) -> str:
+    """Build context string for commit Q&A chat (non-technical audience)."""
+    parts: list[str] = []
+
+    msg = (commit_doc.get("message") or "").strip()
+    if msg:
+        parts.append(f"Commit message: {msg}")
+
+    goal = (commit_doc.get("feature_demo_goal") or "").strip()
+    if goal:
+        parts.append(f"Demo goal: {goal}")
+
+    diff_summary = (commit_doc.get("diff_summary") or "").strip()
+    if diff_summary:
+        parts.append(f"Diff summary: {diff_summary}")
+
+    diff_payload = _build_diff_payload(commit_doc, max_patch_chars=12000)
+    if diff_payload.strip():
+        parts.append(f"Code changes (unified diff):\n{diff_payload}")
+
+    if video_doc:
+        script = video_doc.get("script") or {}
+        if isinstance(script, dict):
+            title = (script.get("title") or "").strip()
+            summary = (script.get("feature_summary") or "").strip()
+            scenes = script.get("scenes") or []
+            if title:
+                parts.append(f"Feature video title: {title}")
+            if summary:
+                parts.append(f"Feature summary (for video): {summary}")
+            if scenes:
+                scene_lines = []
+                for i, s in enumerate(scenes[:6], 1):
+                    if isinstance(s, dict):
+                        text = s.get("on_screen_text") or s.get("narration_seed") or ""
+                        if text:
+                            scene_lines.append(f"  {i}. {text}")
+                if scene_lines:
+                    parts.append("Video scenes:\n" + "\n".join(scene_lines))
+
+    return "\n\n".join(parts) if parts else "No context available for this commit."
+
+
+def answer_commit_question(
+    commit_doc: dict[str, Any],
+    video_doc: dict[str, Any] | None,
+    messages: list[dict[str, str]],
+) -> str:
+    """
+    Answer a user question about a commit using commit + video context.
+    Messages are OpenAI-style: [{ role: "user"|"assistant", content: string }].
+    Responds in plain language for non-technical users.
+    """
+    context = _build_commit_chat_context(commit_doc, video_doc)
+
+    system_message = (
+        "You are a helpful assistant explaining product updates and feature releases to non-technical users. "
+        "You have access to the commit details, code changes, demo goal, and feature video script. "
+        "Answer questions in plain, friendly language. Avoid jargon (API, endpoint, refactor, schema, etc.). "
+        "If the user asks something you cannot answer from the context, say so politely. "
+        "Keep answers concise but informative."
+    )
+
+    user_context = (
+        "Use the following context about this feature release to answer the user's questions:\n\n"
+        f"{context}\n\n"
+        "---\n\n"
+        "Conversation:"
+    )
+
+    # Build full messages: system + context + conversation
+    full_messages: list[dict[str, str]] = [
+        {"role": "system", "content": f"{system_message}\n\n{user_context}"},
+    ]
+
+    for m in messages:
+        role = m.get("role")
+        content = (m.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            full_messages.append({"role": role, "content": content})
+
+    response = invoke_llm(
+        messages=full_messages,
+        model=LLMModel.GEMINI_2_0_FLASH,
+        json_mode=False,
+        temperature=0.3,
+        max_output_tokens=1024,
+        retries=1,
+        timeout_seconds=30.0,
+    )
+    return (response.get("text") or "").strip()
+
+
 def validate_scene_script(payload: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize Gemini script JSON."""
     if not isinstance(payload, dict):

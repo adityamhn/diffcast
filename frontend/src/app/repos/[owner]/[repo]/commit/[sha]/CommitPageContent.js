@@ -10,6 +10,7 @@ import {
   triggerCommitPipeline,
   getBrowserUseGoal,
 } from "@/lib/api";
+import { CommitChat } from "./CommitChat";
 import styles from "./CommitPageContent.module.css";
 
 const POLL_INTERVAL_MS = 2000;
@@ -135,7 +136,9 @@ export function CommitPageContent({
   const featureReleaseUrl = primaryTrack?.final_video_url || video?.base_video_url;
 
   return (
-    <div className={styles.content}>
+    <div className={styles.layout}>
+      <div className={styles.mainColumn}>
+        <div className={styles.content}>
       {error && (
         <div className={styles.errorBanner}>
           {error}
@@ -278,6 +281,11 @@ export function CommitPageContent({
           </div>
         </section>
       )}
+        </div>
+      </div>
+      <aside className={styles.sidebar}>
+        <CommitChat owner={owner} repo={repo} sha={sha} />
+      </aside>
     </div>
   );
 }
