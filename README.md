@@ -23,12 +23,12 @@ When your team merges code, Diffcast:
 
 ## Key Features
 
-- 🤖 **AI-Powered Code Understanding** — Gemini 3.0 Flash analyzes git diffs to extract user-facing changes
-- 🤖 **AI Agent Feature Walkthrough** — Automated recording and walkthrough of features using AI agents — no manual screen recording
-- 🎥 **Automated Video Production** — AI-generated scenes, FFmpeg stitching, and Google Cloud TTS voiceovers
-- 🌐 **Multi-Language Support** — One feature → videos in 10+ languages automatically
-- ⚡ **Zero Manual Work** — GitHub webhook triggers everything; videos ready in under 2 minutes
-- 📊 **Centralized Dashboard** — Next.js frontend with real-time status and PR links
+- **AI-Powered Code Understanding** — Gemini 3.0 Flash analyzes git diffs to extract user-facing changes
+- **AI Agent Feature Walkthrough** — Automated recording and walkthrough of features using AI agents — no manual screen recording
+- **Automated Video Production** — AI-generated scenes, FFmpeg stitching, and Google Cloud TTS voiceovers
+- **Multi-Language Support** — One feature → videos in 10+ languages automatically
+- **Zero Manual Work** — GitHub webhook triggers everything; videos ready in under 2 minutes
+- **Centralized Dashboard** — Next.js frontend with real-time status and PR links
 
 
 ## Why This Matters
