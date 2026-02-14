@@ -12,7 +12,13 @@ def index():
         "version": "v1",
         "endpoints": {
             "status": "/api/status",
+            "repos": "GET /api/repos",
+            "repos_register": "POST /api/repos/register",
+            "repos_commits": "GET /api/repos/<owner>/<repo>/commits",
+            "sync_commit": "POST /api/sync/commit",
+            "sync_pr": "POST /api/sync/pr",
         },
+        "webhook": "POST /webhook/github (multi-repo)",
     })
 
 

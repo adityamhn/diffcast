@@ -10,7 +10,7 @@ def index():
     """Landing page."""
     return jsonify({
         "message": "Welcome to Diffcast",
-        "docs": "/api/v1",
+        "docs": "/api",
         "health": "/health",
     })
 

@@ -4,7 +4,7 @@ import os
 from flask import Flask
 
 from config import config_by_name
-from routes import main_bp, api_bp
+from routes import main_bp, api_bp, webhook_bp, sync_bp, repos_bp
 
 
 def create_app(config_name=None):
@@ -17,6 +17,9 @@ def create_app(config_name=None):
     # Register blueprints
     app.register_blueprint(main_bp)
     app.register_blueprint(api_bp)
+    app.register_blueprint(webhook_bp)
+    app.register_blueprint(sync_bp)
+    app.register_blueprint(repos_bp)
 
     return app
 
