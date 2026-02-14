@@ -1,4 +1,4 @@
-# Diffcast 🎬
+# Diffcast
 ## Automated Feature Demos from Code Changes
 
 ## The Problem
