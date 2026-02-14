@@ -951,8 +951,9 @@ def generate_shot_plan(
             {
                 "role": "system",
                 "content": (
-                    "You plan cinematic product update videos. "
-                    "Output only JSON with concise consumer-facing language."
+                    "You plan photorealistic web application product demo videos for Veo video generation. "
+                    "Your prompts must be highly detailed and cinematic, describing exactly what happens on screen. "
+                    "Output only JSON with rich, descriptive prompts for video generation AI."
                 ),
             },
             {
@@ -960,21 +961,38 @@ def generate_shot_plan(
                 "content": (
                     "Return JSON only with this shape:\n"
                     "{\n"
-                    '  "opener_prompt": "string",\n'
-                    '  "transition_prompts": ["string"],\n'
-                    '  "outro_prompt": "string",\n'
+                    '  "opener_prompt": "string (detailed Veo prompt for opener video)",\n'
+                    '  "outro_prompt": "string (detailed Veo prompt for outro video)",\n'
                     '  "timeline": [\n'
                     "    {\n"
-                    '      "kind": "opener|source|transition|outro",\n'
+                    '      "kind": "opener|source|outro",\n'
                     '      "label": "string",\n'
                     '      "duration_sec": number,\n'
                     '      "narration": "string"\n'
                     "    }\n"
                     "  ]\n"
-                    "}\n"
-                    "Constraints:\n"
+                    "}\n\n"
+                    "CRITICAL: The opener_prompt and outro_prompt must be HIGHLY DETAILED Veo video generation prompts "
+                    "for photorealistic web application product demos. Each prompt should include:\n"
+                    "- Description: What is shown on the screen (web app UI, features being demonstrated)\n"
+                    "- Style: 'photorealistic cinematic product demo, screen-recording realism'\n"
+                    "- Camera: Describe camera movement (steady front-on view, gentle push-in, subtle parallax, pull-back)\n"
+                    "- Lighting: 'soft neutral studio lighting with minimal screen glare, true-to-life monitor reflections, crisp readable UI'\n"
+                    "- Environment: 'minimal desk setup with thin-bezel monitor, blurred background office/studio'\n"
+                    "- Elements: List UI elements visible (buttons, cards, forms, navigation, etc.)\n"
+                    "- Motion: Describe cursor movement, clicks, scrolling, typing, hover states, live filtering/updates\n"
+                    "- Ending: How the video concludes (UI stable and readable before fade out)\n"
+                    "- Keywords: '16:9, 4K, photorealistic, product demo, web app UI, cursor interaction, smooth scrolling, clean modern interface, responsive UI, cinematic clarity, no text overlays'\n\n"
+                    "IMPORTANT CONSTRAINTS:\n"
+                    "- NO on-screen captions, text overlays, or annotations - the UI itself demonstrates the feature\n"
+                    "- Focus on realistic cursor interactions, typing, scrolling, and UI responsiveness\n"
+                    "- Show a realistic thin-bezel monitor with the web app displayed\n"
+                    "- Include hover states, loading indicators, smooth animations\n"
+                    "- The opener should introduce the feature being showcased\n"
+                    "- The outro should show the completed interaction with a satisfying conclusion\n\n"
+                    "Timeline constraints:\n"
                     "- total timeline duration must be between 20 and 35 seconds.\n"
-                    "- include at least one opener and one outro item.\n"
+                    "- include exactly one opener and one outro item (no transitions).\n"
                     "- source segment must appear in timeline.\n"
                     "- keep narration simple and non-technical.\n\n"
                     f"Input JSON:\n{json.dumps(payload, ensure_ascii=True)}"
@@ -983,10 +1001,10 @@ def generate_shot_plan(
         ],
         model=LLMModel.GEMINI_2_0_FLASH,
         json_mode=True,
-        temperature=0.3,
-        max_output_tokens=1800,
+        temperature=0.4,
+        max_output_tokens=2500,
         retries=1,
-        timeout_seconds=45.0,
+        timeout_seconds=60.0,
     )
 
     data = response.get("json")
@@ -1033,14 +1051,10 @@ def generate_shot_plan(
             item["duration_sec"] = round(max(1.0, item["duration_sec"] * scale), 2)
         total = sum(item["duration_sec"] for item in normalized_timeline)
 
+    # Use longer truncation limits for detailed Veo prompts (web app product demo style)
     return {
-        "opener_prompt": _truncate(str(data.get("opener_prompt", "Cinematic opening shot")).strip(), 400),
-        "transition_prompts": [
-            _truncate(str(p).strip(), 320)
-            for p in (data.get("transition_prompts") if isinstance(data.get("transition_prompts"), list) else [])
-            if str(p).strip()
-        ],
-        "outro_prompt": _truncate(str(data.get("outro_prompt", "Cinematic product outro")).strip(), 400),
+        "opener_prompt": _truncate(str(data.get("opener_prompt", "")).strip(), 1500),
+        "outro_prompt": _truncate(str(data.get("outro_prompt", "")).strip(), 1500),
         "timeline": normalized_timeline,
         "total_duration_sec": round(total, 2),
     }

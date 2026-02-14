@@ -139,6 +139,7 @@ def generate_veo_clip(
                 duration_seconds=actual_duration,
                 aspect_ratio=aspect_ratio,
                 person_generation="allow_all",
+                generate_audio=False,
             ),
         )
     except Exception as exc:

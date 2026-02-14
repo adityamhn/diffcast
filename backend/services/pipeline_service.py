@@ -235,23 +235,22 @@ def _run_prepare_pipeline(
 
 
 def _build_veo_prompts(shot_plan: dict[str, Any]) -> list[tuple[str, float]]:
+    """Build Veo prompts for web app product demo videos.
+
+    Returns exactly 2 prompts: opener and outro (no transitions).
+    Each prompt is a detailed description for photorealistic product demo generation.
+    """
     prompts: list[tuple[str, float]] = []
     opener_prompt = str(shot_plan.get("opener_prompt", "")).strip()
     outro_prompt = str(shot_plan.get("outro_prompt", "")).strip()
-    transitions = (
-        shot_plan.get("transition_prompts")
-        if isinstance(shot_plan.get("transition_prompts"), list)
-        else []
-    )
 
     if opener_prompt:
         prompts.append((opener_prompt, 4.0))
-    for item in transitions[:2]:
-        if str(item).strip():
-            prompts.append((str(item).strip(), 4.0))
     if outro_prompt:
         prompts.append((outro_prompt, 4.0))
-    return prompts[:4]
+
+    # Return exactly 2 videos max (opener + outro)
+    return prompts[:2]
 
 
 def _upload_finalize_assets(
