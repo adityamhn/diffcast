@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 @pipeline_bp.route("/pipeline/commit", methods=["POST"])
 def trigger_commit_pipeline():
     """
-    Queue commit media generation.
+    Queue commit script preparation (stage 1 of cinematic pipeline).
 
     Body:
       { "commit_id": "<repo_sha7>", "languages": ["en","es"], "force": false }
@@ -203,6 +203,51 @@ def trigger_feature_demo_pipeline():
         return jsonify({"error": str(exc)}), 500
 
     return jsonify({"ok": True, **result}), 202 if result.get("queued") else 200
+
+
+@pipeline_bp.route("/pipeline/ingest-base-video", methods=["POST"])
+def ingest_base_video():
+    """Queue final cinematic render from a source implementation video."""
+    data = request.get_json() or {}
+    commit_doc_id = data.get("commit_id")
+    if not commit_doc_id:
+        logger.warning("Ingest pipeline rejected: missing commit_id")
+        return jsonify({"error": "commit_id is required"}), 400
+
+    source_video = data.get("source_video")
+    if not isinstance(source_video, dict):
+        logger.warning("Ingest pipeline rejected: source_video missing")
+        return jsonify({"error": "source_video object is required"}), 400
+    kind = str(source_video.get("kind", "")).strip()
+    uri = str(source_video.get("uri", "")).strip()
+    if not kind or not uri:
+        return jsonify({"error": "source_video.kind and source_video.uri are required"}), 400
+    if kind not in {"local_path", "https_url", "gs_uri"}:
+        return jsonify({"error": "source_video.kind must be one of local_path, https_url, gs_uri"}), 400
+
+    force = bool(data.get("force", False))
+    style_profile = str(data.get("style_profile", "apple_keynote_v1")).strip() or "apple_keynote_v1"
+    languages = data.get("languages")
+    if languages is not None and not isinstance(languages, list):
+        return jsonify({"error": "languages must be an array of language codes"}), 400
+
+    try:
+        result = enqueue_ingest_pipeline(
+            commit_id=commit_doc_id,
+            source_video=source_video,
+            languages=languages,
+            style_profile=style_profile,
+            force=force,
+        )
+    except ValueError as exc:
+        logger.warning("Ingest pipeline failed commit_id=%s error=%s", commit_doc_id, exc)
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Ingest pipeline unexpected failure commit_id=%s", commit_doc_id)
+        return jsonify({"error": str(exc)}), 500
+
+    video = get_video(result["video_id"])
+    return jsonify({"ok": True, **result, "video": video}), 202 if result.get("queued") else 200
 
 
 @pipeline_bp.route("/videos/<video_doc_id>", methods=["GET"])

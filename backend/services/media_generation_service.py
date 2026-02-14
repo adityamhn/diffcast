@@ -927,3 +927,172 @@ def generate_commit_media_assets(
         result["workspace_dir"],
     )
     return result
+
+
+def generate_shot_plan(
+    script: dict[str, Any],
+    target_duration_sec: int,
+) -> dict[str, Any]:
+    """Create structured cinematic plan for source + Veo inserts."""
+    scenes = script.get("scenes", [])
+    if not scenes:
+        raise ScriptValidationError("script.scenes is required for shot planning")
+
+    payload = {
+        "title": script.get("title", "Product Update"),
+        "feature_summary": script.get("feature_summary", ""),
+        "scene_narration_seed": [scene.get("narration_seed", "") for scene in scenes],
+        "scene_on_screen_text": [scene.get("on_screen_text", "") for scene in scenes],
+        "target_duration_sec": target_duration_sec,
+    }
+
+    response = invoke_llm(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You plan cinematic product update videos. "
+                    "Output only JSON with concise consumer-facing language."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Return JSON only with this shape:\n"
+                    "{\n"
+                    '  "opener_prompt": "string",\n'
+                    '  "transition_prompts": ["string"],\n'
+                    '  "outro_prompt": "string",\n'
+                    '  "timeline": [\n'
+                    "    {\n"
+                    '      "kind": "opener|source|transition|outro",\n'
+                    '      "label": "string",\n'
+                    '      "duration_sec": number,\n'
+                    '      "narration": "string"\n'
+                    "    }\n"
+                    "  ]\n"
+                    "}\n"
+                    "Constraints:\n"
+                    "- total timeline duration must be between 20 and 35 seconds.\n"
+                    "- include at least one opener and one outro item.\n"
+                    "- source segment must appear in timeline.\n"
+                    "- keep narration simple and non-technical.\n\n"
+                    f"Input JSON:\n{json.dumps(payload, ensure_ascii=True)}"
+                ),
+            },
+        ],
+        model=LLMModel.GEMINI_2_0_FLASH,
+        json_mode=True,
+        temperature=0.3,
+        max_output_tokens=1800,
+        retries=1,
+        timeout_seconds=45.0,
+    )
+
+    data = response.get("json")
+    if not isinstance(data, dict):
+        raise ScriptValidationError("shot plan must be a JSON object")
+
+    timeline = data.get("timeline")
+    if not isinstance(timeline, list) or not timeline:
+        raise ScriptValidationError("shot plan timeline must be a non-empty array")
+
+    normalized_timeline: list[dict[str, Any]] = []
+    total = 0.0
+    for item in timeline:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "source")).strip().lower() or "source"
+        label = _truncate(str(item.get("label", "Scene")).strip() or "Scene", 120)
+        narration = _truncate(str(item.get("narration", "")).strip(), 220)
+        try:
+            duration = float(item.get("duration_sec", 0))
+        except (TypeError, ValueError):
+            duration = 0.0
+        if duration <= 0:
+            continue
+        total += duration
+        normalized_timeline.append(
+            {
+                "kind": kind,
+                "label": label,
+                "duration_sec": duration,
+                "narration": narration,
+            }
+        )
+
+    if not normalized_timeline:
+        raise ScriptValidationError("shot plan timeline has no valid segments")
+
+    if total < 20:
+        normalized_timeline[-1]["duration_sec"] += 20 - total
+        total = 20
+    if total > 35:
+        scale = 35 / total
+        for item in normalized_timeline:
+            item["duration_sec"] = round(max(1.0, item["duration_sec"] * scale), 2)
+        total = sum(item["duration_sec"] for item in normalized_timeline)
+
+    return {
+        "opener_prompt": _truncate(str(data.get("opener_prompt", "Cinematic opening shot")).strip(), 400),
+        "transition_prompts": [
+            _truncate(str(p).strip(), 320)
+            for p in (data.get("transition_prompts") if isinstance(data.get("transition_prompts"), list) else [])
+            if str(p).strip()
+        ],
+        "outro_prompt": _truncate(str(data.get("outro_prompt", "Cinematic product outro")).strip(), 400),
+        "timeline": normalized_timeline,
+        "total_duration_sec": round(total, 2),
+    }
+
+
+def generate_narration_script(shot_plan: dict[str, Any], language: str = "en") -> str:
+    """Create final narration script from shot timeline."""
+    timeline = shot_plan.get("timeline", [])
+    source = {
+        "language": language,
+        "timeline": [
+            {
+                "kind": item.get("kind"),
+                "label": item.get("label"),
+                "duration_sec": item.get("duration_sec"),
+                "narration": item.get("narration"),
+            }
+            for item in timeline
+        ],
+    }
+    response = invoke_llm(
+        messages=[
+            {
+                "role": "system",
+                "content": "You write concise narration for product teaser videos.",
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Return JSON only with shape: { \"full_narration\": \"string\", \"line_per_segment\": [string] }\n"
+                    "Keep language non-technical and customer-friendly.\n"
+                    f"Input:\n{json.dumps(source, ensure_ascii=True)}"
+                ),
+            },
+        ],
+        model=LLMModel.GEMINI_2_0_FLASH,
+        json_mode=True,
+        temperature=0.3,
+        max_output_tokens=1200,
+        retries=1,
+        timeout_seconds=45.0,
+    )
+    data = response.get("json")
+    if not isinstance(data, dict):
+        raise ScriptValidationError("narration response must be json object")
+    narration = str(data.get("full_narration", "")).strip()
+    if not narration:
+        raise ScriptValidationError("narration must be non-empty")
+
+    lines = data.get("line_per_segment") if isinstance(data.get("line_per_segment"), list) else []
+    for idx, item in enumerate(shot_plan.get("timeline", [])):
+        if idx < len(lines) and str(lines[idx]).strip():
+            item["narration"] = _truncate(str(lines[idx]).strip(), 220)
+
+    return narration

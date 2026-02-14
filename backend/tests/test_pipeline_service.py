@@ -60,6 +60,59 @@ class PipelineServiceTests(unittest.TestCase):
         self.assertTrue(result["skipped"])
         self.assertEqual(result["reason"], "already_running_or_completed")
 
+    def test_ingest_prerequisites_backfills_missing_plan(self) -> None:
+        commit_doc = {
+            "id": "octo_repo_abc1234",
+            "repo_full_name": "octo/repo",
+            "repo_id": "octo_repo",
+            "sha": "abc1234567890",
+            "sha_short": "abc1234",
+        }
+        existing = {"script": {"title": "Update Title"}, "enhancement_plan": None}
+        fake_plan = {"timeline": [{"start_sec": 0, "end_sec": 2, "text": "hello"}]}
+
+        with patch.object(pipeline_module, "generate_shot_plan", return_value=fake_plan) as shot_plan_mock:
+            with patch.object(pipeline_module, "update_video_status") as update_mock:
+                result = pipeline_module._ensure_ingest_prerequisites(
+                    commit_doc_id="octo_repo_abc1234",
+                    video_doc_id="octo_repo_abc1234",
+                    commit_doc=commit_doc,
+                    existing=existing,
+                )
+
+        self.assertIsNotNone(result)
+        script, shot_plan = result
+        self.assertEqual(script, existing["script"])
+        self.assertEqual(shot_plan, fake_plan)
+        shot_plan_mock.assert_called_once()
+        update_mock.assert_called_once()
+
+    def test_ingest_prerequisites_backfill_failure_marks_failed(self) -> None:
+        commit_doc = {
+            "id": "octo_repo_abc1234",
+            "repo_full_name": "octo/repo",
+            "repo_id": "octo_repo",
+            "sha": "abc1234567890",
+            "sha_short": "abc1234",
+        }
+        existing = {"script": {"title": "Update Title"}, "enhancement_plan": None}
+
+        with patch.object(pipeline_module, "generate_shot_plan", side_effect=RuntimeError("plan generation failed")):
+            with patch.object(pipeline_module, "update_video_status") as update_mock:
+                result = pipeline_module._ensure_ingest_prerequisites(
+                    commit_doc_id="octo_repo_abc1234",
+                    video_doc_id="octo_repo_abc1234",
+                    commit_doc=commit_doc,
+                    existing=existing,
+                )
+
+        self.assertIsNone(result)
+        update_mock.assert_called_once()
+        kwargs = update_mock.call_args.kwargs
+        self.assertEqual(kwargs["status"], "failed")
+        self.assertEqual(kwargs["stage"], "error")
+        self.assertIn("plan generation failed", kwargs["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

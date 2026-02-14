@@ -21,6 +21,7 @@ def index():
                 "sync_commit": "POST /api/sync/commit",
                 "sync_pr": "POST /api/sync/pr",
                 "pipeline_commit": "POST /api/pipeline/commit",
+                "pipeline_ingest_base_video": "POST /api/pipeline/ingest-base-video",
                 "video_status": "GET /api/videos/<video_id>",
             },
             "webhook": "POST /webhook/github (multi-repo)",

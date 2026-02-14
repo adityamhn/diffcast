@@ -85,10 +85,14 @@ Per-commit media pipeline status and generated outputs. `videoId` = `{repoId}_{s
 | sha | string | Full 40-char commit SHA |
 | sha_short | string | Short SHA |
 | status | string | `queued`, `running`, `completed`, `failed` |
-| stage | string | `script`, `video`, `voiceover`, `captions`, `upload`, `done`, `error` |
+| stage | string | `script`, `awaiting_source_video`, `normalize_video`, `veo_generate`, `stitch`, `voiceover`, `captions`, `upload`, `done`, `error` |
 | error | string \| null | Top-level failure message |
 | languages_requested | array | Requested language codes |
+| source_video | map \| null | Source implementation video metadata (`kind`, `uri`, `duration_sec`, `width`, `height`) |
 | base_video_url | string \| null | URL for rendered base video |
+| enhanced_video_url | string \| null | URL for stitched cinematic visual video |
+| enhancement_plan | map \| null | Structured shot plan and Veo prompts |
+| fallback_used | bool | Whether non-Veo fallback path was used |
 | script | map \| null | Generated non-technical script and scene data |
 | tracks | map | Per-language metadata keyed by language code |
 | created_at | timestamp | First created |
@@ -103,6 +107,9 @@ Per-commit media pipeline status and generated outputs. `videoId` = `{repoId}_{s
 | captions_url | string \| null | URL for generated SRT captions |
 | voice_script | string \| null | Localized narration text |
 | duration_sec | number \| null | Estimated track duration |
+| voice_provider | string \| null | `gemini_tts` for current implementation |
+| caption_mode | string \| null | `burned_plus_srt` |
+| mix_meta | map \| null | Audio mix metadata for debugging |
 | status | string | `completed` or `failed` |
 | error | string \| null | Track-level failure message |
 

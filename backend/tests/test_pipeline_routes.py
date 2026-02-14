@@ -68,6 +68,41 @@ class PipelineRouteTests(unittest.TestCase):
             response = self.client.get("/api/videos/unknown_id")
         self.assertEqual(response.status_code, 404)
 
+    def test_post_pipeline_ingest_base_video(self) -> None:
+        ingest_response = {
+            "queued": True,
+            "skipped": False,
+            "video_id": "octo_repo_abc1234",
+            "commit_id": "octo_repo_abc1234",
+            "status": "running",
+            "stage": "normalize_video",
+        }
+        with patch("routes.pipeline.enqueue_ingest_pipeline", return_value=ingest_response):
+            with patch("routes.pipeline.get_video", return_value={"id": "octo_repo_abc1234", "status": "running"}):
+                response = self.client.post(
+                    "/api/pipeline/ingest-base-video",
+                    json={
+                        "commit_id": "octo_repo_abc1234",
+                        "source_video": {"kind": "local_path", "uri": "./backend/tests/videos/testvideo.mp4"},
+                        "languages": ["en"],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 202)
+        body = response.get_json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["video_id"], "octo_repo_abc1234")
+
+    def test_post_pipeline_ingest_base_video_rejects_invalid_kind(self) -> None:
+        response = self.client.post(
+            "/api/pipeline/ingest-base-video",
+            json={
+                "commit_id": "octo_repo_abc1234",
+                "source_video": {"kind": "ftp", "uri": "foo"},
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_list_repo_videos(self) -> None:
         fake_videos = [{"id": "octo_repo_abc1234", "status": "completed"}]
         with patch("routes.pipeline.list_videos", return_value=fake_videos):
@@ -80,4 +115,3 @@ class PipelineRouteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

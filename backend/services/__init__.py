@@ -22,13 +22,14 @@ from .firebase_service import (
     upsert_video_doc,
 )
 from .github_client import get_commit_diff, get_pr_diff, get_compare_diff
-from .pipeline_service import enqueue_commit_pipeline, enqueue_feature_demo_pipeline
+from .pipeline_service import enqueue_commit_pipeline, enqueue_feature_demo_pipeline, enqueue_ingest_pipeline
 
 __all__ = [
     "build_video_doc_id",
     "update_commit_goal",
     "enqueue_commit_pipeline",
     "enqueue_feature_demo_pipeline",
+    "enqueue_ingest_pipeline",
     "get_commit_by_id",
     "get_all_repo_secrets",
     "get_commit",

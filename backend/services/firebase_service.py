@@ -289,7 +289,13 @@ def upsert_video_doc(video_doc_id: str, payload: dict[str, Any]) -> str:
         payload.setdefault("created_at", now)
     payload["updated_at"] = now
     ref.set(payload, merge=True)
-    logger.info("Upserted video doc video_id=%s status=%s stage=%s", video_doc_id, payload.get("status"), payload.get("stage"))
+    logger.info(
+        "Upserted video doc video_id=%s status=%s stage=%s error=%s",
+        video_doc_id,
+        payload.get("status"),
+        payload.get("stage"),
+        payload.get("error"),
+    )
     return video_doc_id
 
 

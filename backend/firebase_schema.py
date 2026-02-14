@@ -56,14 +56,18 @@ videos/{videoId}
   - sha: str
   - sha_short: str
   - status: str  # queued, running, completed, failed
-  - stage: str  # script, video, voiceover, captions, upload, done, error
+  - stage: str  # script, awaiting_source_video, normalize_video, veo_generate, stitch, voiceover, captions, upload, done, error
   - error: str | null
   - languages_requested: list[str]
+  - source_video: map | null
   - base_video_url: str | null
+  - enhanced_video_url: str | null
+  - enhancement_plan: map | null
+  - fallback_used: bool
   - script: { title, feature_summary, scenes[], total_duration_sec } | null
   - tracks: {
       "<lang>": {
-        audio_url, captions_url, voice_script, duration_sec, status, error
+        audio_url, captions_url, voice_script, duration_sec, voice_provider, caption_mode, mix_meta, status, error
       }
     }
   - created_at: timestamp
@@ -139,7 +143,11 @@ class VideoDoc:
     stage: str
     error: Optional[str] = None
     languages_requested: list[str] = field(default_factory=list)
+    source_video: Optional[dict] = None
     base_video_url: Optional[str] = None
+    enhanced_video_url: Optional[str] = None
+    enhancement_plan: Optional[dict] = None
+    fallback_used: bool = False
     script: Optional[dict] = None
     tracks: dict = field(default_factory=dict)
     created_at: Optional[datetime] = None
