@@ -7,7 +7,7 @@ load_dotenv()
 
 class FeatureVideoRecorder:
     def __init__(self):
-        self.llm = ChatGoogle(model="gemini-2.0-flash-exp", temperature=0.3)
+        self.llm = ChatGoogle(model="gemini-2.5-flash-lite", temperature=0.3)
 
     async def record_feature_demo(
         self,
