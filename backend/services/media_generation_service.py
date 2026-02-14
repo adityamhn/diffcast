@@ -385,9 +385,9 @@ def generate_scene_script(commit_doc: dict[str, Any]) -> dict[str, Any]:
         json_mode=True,
         response_schema=SceneScriptSchema,
         temperature=0.2,
-        max_output_tokens=2000,
-        retries=1,
-        timeout_seconds=60.0,
+        max_output_tokens=4000,  # Increased to avoid truncation
+        retries=2,  # Extra retry for transient JSON issues
+        timeout_seconds=90.0,
     )
     payload = response.get("json")
     if not isinstance(payload, dict):

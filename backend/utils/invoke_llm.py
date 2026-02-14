@@ -330,12 +330,20 @@ def invoke_llm(
                 "raw": response,
                 "usage": _extract_usage(response),
             }
-        except LLMResponseFormatError:
-            # JSON formatting issues should fail fast and not retry.
+        except LLMResponseFormatError as exc:
+            # JSON formatting issues can be transient (model glitches), allow retry
+            last_error = exc
+            if attempt < max_attempts - 1:
+                print(f"JSON format error on attempt {attempt + 1}/{max_attempts}, retrying: {str(exc)[:200]}")
+                sleep_seconds = min(0.5 * (2**attempt), 2.0)
+                time.sleep(sleep_seconds)
+                attempt += 1
+                continue
             raise
         except Exception as exc:
             last_error = exc
             if attempt < max_attempts - 1 and _is_transient_error(exc):
+                print(f"Transient error on attempt {attempt + 1}/{max_attempts}, retrying: {str(exc)[:200]}")
                 sleep_seconds = min(0.5 * (2**attempt), 2.0)
                 time.sleep(sleep_seconds)
                 attempt += 1
