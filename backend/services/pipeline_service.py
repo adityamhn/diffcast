@@ -53,6 +53,50 @@ _FUTURES: dict[str, Future] = {}
 _LOCK = Lock()
 logger = logging.getLogger(__name__)
 
+# Debug directory for saving intermediate audio/video files
+# Set PIPELINE_DEBUG_DIR to a path to persist debug artifacts
+DEBUG_DIR = os.environ.get("PIPELINE_DEBUG_DIR", "").strip()
+
+
+def _save_debug_file(src_path: str | Path, label: str, video_id: str) -> None:
+    """Copy a file to the debug directory if enabled."""
+    if not DEBUG_DIR:
+        return
+    try:
+        debug_root = Path(DEBUG_DIR)
+        debug_root.mkdir(parents=True, exist_ok=True)
+        src = Path(src_path)
+        if not src.exists():
+            logger.warning("Debug file not found: %s", src)
+            return
+        # Create a subfolder per video_id
+        video_debug_dir = debug_root / video_id
+        video_debug_dir.mkdir(parents=True, exist_ok=True)
+        dest = video_debug_dir / f"{label}{src.suffix}"
+        shutil.copy2(src, dest)
+        logger.info("Debug file saved: %s -> %s", src, dest)
+    except Exception as exc:
+        logger.warning("Failed to save debug file %s: %s", label, exc)
+
+
+def _extract_audio_track(video_path: str | Path, output_path: str | Path) -> bool:
+    """Extract audio track from video to WAV for debugging."""
+    import subprocess
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", str(video_path),
+            "-vn", "-acodec", "pcm_s16le", "-ar", "48000", "-ac", "2",
+            str(output_path)
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            logger.warning("Audio extraction failed: %s", proc.stderr[:500] if proc.stderr else "unknown")
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("Audio extraction error: %s", exc)
+        return False
+
 
 # Pipeline stages for the unified flow
 PIPELINE_STAGES = [
@@ -249,6 +293,10 @@ def _run_unified_pipeline(
             demo_normalized,
         )
 
+        # Save debug: raw and normalized demo video
+        _save_debug_file(demo_video_path, "demo_raw", video_doc_id)
+        _save_debug_file(demo_normalized, "demo_normalized", video_doc_id)
+
         # Also update commit with feature demo info
         update_commit_feature_demo(
             commit_doc_id=commit_doc_id,
@@ -348,6 +396,13 @@ def _run_unified_pipeline(
                     normalize_video(result["path"], normalized_clip)
                     veo_clips.append(normalized_clip)
 
+                    # Save debug files: raw Veo clip + extracted audio
+                    _save_debug_file(result["path"], f"veo_{idx:02d}_raw", video_doc_id)
+                    _save_debug_file(normalized_clip, f"veo_{idx:02d}_norm", video_doc_id)
+                    veo_audio_debug = workspace_dir / f"veo_{idx:02d}_audio.wav"
+                    if _extract_audio_track(result["path"], veo_audio_debug):
+                        _save_debug_file(veo_audio_debug, f"veo_{idx:02d}_audio", video_doc_id)
+
                     logger.info(
                         "Veo clip generated index=%d role=%s path=%s",
                         idx,
@@ -411,6 +466,9 @@ def _run_unified_pipeline(
             enhanced_meta["duration_sec"],
         )
 
+        # Save debug: enhanced (stitched) video
+        _save_debug_file(enhanced_video, "enhanced", video_doc_id)
+
         # ========== STAGE: voice ==========
         current_stage = "voice"
         logger.info(
@@ -440,17 +498,34 @@ def _run_unified_pipeline(
                     language=language,
                 )
 
+                # Save debug: TTS audio
+                _save_debug_file(audio_path, f"tts_narration_{language}", video_doc_id)
+
                 # ========== STAGE: captions (per language) ==========
                 srt_text = build_srt_from_timeline(shot_plan.get("timeline", []))
                 captions_path = workspace_dir / f"captions_{language}.srt"
                 captions_path.write_text(srt_text, encoding="utf-8")
 
+                # Save debug: enhanced video audio before mixing
+                enhanced_audio_debug = workspace_dir / f"enhanced_audio_{language}.wav"
+                if _extract_audio_track(enhanced_video, enhanced_audio_debug):
+                    _save_debug_file(enhanced_audio_debug, f"enhanced_audio_{language}", video_doc_id)
+
                 # ========== STAGE: finalize (per language) ==========
                 mixed_video = workspace_dir / f"mixed_{language}.mp4"
                 mix_meta = mix_with_narration(enhanced_video, audio_path, mixed_video)
 
+                # Save debug: mixed video and its audio track
+                _save_debug_file(mixed_video, f"mixed_{language}", video_doc_id)
+                mixed_audio_debug = workspace_dir / f"mixed_audio_{language}.wav"
+                if _extract_audio_track(mixed_video, mixed_audio_debug):
+                    _save_debug_file(mixed_audio_debug, f"mixed_audio_{language}", video_doc_id)
+
                 final_video_path = workspace_dir / f"final_{language}.mp4"
                 final_meta = burn_captions(mixed_video, captions_path, final_video_path)
+
+                # Save debug: final video
+                _save_debug_file(final_video_path, f"final_{language}", video_doc_id)
 
                 track_payloads[language] = {
                     "status": "completed",
@@ -787,4 +862,375 @@ def enqueue_feature_demo_pipeline(
         "skipped": False,
         "commit_id": commit_id,
         "status": "queued",
+    }
+
+
+# =============================================================================
+# Pipeline from pre-generated script (for testing)
+# =============================================================================
+
+
+def _run_pipeline_from_script(
+    commit_id: str,
+    video_doc_id: str,
+    script: dict[str, Any],
+    shot_plan: dict[str, Any],
+    languages_requested: list[str],
+) -> None:
+    """Run pipeline from snapshots stage onwards using pre-generated script.
+    
+    This skips goal, demo, and script generation - uses existing demo video
+    and the provided script/shot_plan.
+    
+    Flow: snapshots → veo → stitch → voice → captions → finalize
+    """
+    logger.info(
+        "Pipeline from script started commit_id=%s video_id=%s",
+        commit_id,
+        video_doc_id,
+    )
+    
+    commit_doc = get_commit_by_id(commit_id)
+    if not commit_doc:
+        update_video_status(
+            video_doc_id=video_doc_id,
+            status="failed",
+            stage="error",
+            error=f"Commit not found: {commit_id}",
+        )
+        return
+    
+    # Get demo video URL from commit
+    demo_video_url = commit_doc.get("feature_demo_video_url")
+    if not demo_video_url:
+        update_video_status(
+            video_doc_id=video_doc_id,
+            status="failed",
+            stage="error",
+            error="No demo video found. Run demo phase first.",
+        )
+        return
+    
+    workspace_dir = Path(tempfile.mkdtemp(prefix="diffcast-from-script-"))
+    current_stage = "snapshots"
+    
+    try:
+        # Download demo video
+        import requests as http_requests
+        
+        demo_path = workspace_dir / "demo.mp4"
+        logger.info("Downloading demo video url=%s", demo_video_url)
+        response = http_requests.get(demo_video_url, timeout=120)
+        response.raise_for_status()
+        demo_path.write_bytes(response.content)
+        
+        # Normalize demo
+        demo_normalized = workspace_dir / "demo_normalized.mp4"
+        demo_meta = normalize_video(demo_path, demo_normalized)
+        
+        # ========== STAGE: snapshots ==========
+        logger.info("Pipeline stage=%s video_id=%s", current_stage, video_doc_id)
+        update_video_status(
+            video_doc_id=video_doc_id,
+            status="running",
+            stage="snapshots",
+            error=None,
+            extra_fields={"script": script, "shot_plan": shot_plan},
+        )
+        
+        snapshots_dir = workspace_dir / "snapshots"
+        snapshot_paths = extract_snapshots(
+            video_path=demo_normalized,
+            output_dir=snapshots_dir,
+            num_snapshots=2,
+            strategy="uniform",
+        )
+        logger.info("Snapshots extracted count=%d", len(snapshot_paths))
+        
+        # ========== STAGE: veo ==========
+        current_stage = "veo"
+        logger.info("Pipeline stage=%s video_id=%s", current_stage, video_doc_id)
+        update_video_status(
+            video_doc_id=video_doc_id,
+            status="running",
+            stage="veo",
+            error=None,
+            extra_fields={"snapshots": [str(p) for p in snapshot_paths]},
+        )
+        
+        veo_enabled = os.environ.get("PIPELINE_ENABLE_VEO", "true").lower() == "true"
+        veo_clips: list[Path] = []
+        clip_prompts = shot_plan.get("clip_prompts", [])
+        
+        if veo_enabled and clip_prompts:
+            for idx, clip_info in enumerate(clip_prompts[:2]):
+                try:
+                    prompt = clip_info.get("prompt", "")
+                    snapshot_index = clip_info.get("snapshot_index", idx)
+                    reference_image = (
+                        snapshot_paths[snapshot_index]
+                        if snapshot_index < len(snapshot_paths)
+                        else snapshot_paths[0] if snapshot_paths else None
+                    )
+                    
+                    clip_path = workspace_dir / f"veo_{idx:02d}.mp4"
+                    result = generate_veo_clip(
+                        prompt=prompt,
+                        output_path=clip_path,
+                        duration_sec=6,
+                        reference_image_path=reference_image,
+                    )
+                    
+                    normalized_clip = workspace_dir / f"veo_{idx:02d}_norm.mp4"
+                    normalize_video(result["path"], normalized_clip)
+                    veo_clips.append(normalized_clip)
+                    
+                    _save_debug_file(result["path"], f"veo_{idx:02d}_raw", video_doc_id)
+                    _save_debug_file(normalized_clip, f"veo_{idx:02d}_norm", video_doc_id)
+                    
+                    logger.info(
+                        "Veo clip generated index=%d role=%s",
+                        idx,
+                        clip_info.get("role", "unknown"),
+                    )
+                except GeminiVideoError:
+                    logger.exception("Veo clip generation failed index=%d", idx)
+                    continue
+        
+        # ========== STAGE: stitch ==========
+        current_stage = "stitch"
+        logger.info("Pipeline stage=%s video_id=%s veo_clips=%d", current_stage, video_doc_id, len(veo_clips))
+        update_video_status(
+            video_doc_id=video_doc_id,
+            status="running",
+            stage="stitch",
+            error=None,
+            extra_fields={"veo_clips_count": len(veo_clips)},
+        )
+        
+        enhanced_video = workspace_dir / "enhanced.mp4"
+        
+        if len(veo_clips) >= 2:
+            enhanced_meta = assemble_feature_video(
+                opener_clip=veo_clips[0],
+                demo_video=demo_normalized,
+                closing_clips=veo_clips[1:2],
+                output_path=enhanced_video,
+            )
+        elif len(veo_clips) >= 1:
+            enhanced_meta = assemble_feature_video(
+                opener_clip=veo_clips[0],
+                demo_video=demo_normalized,
+                closing_clips=veo_clips[1:] if len(veo_clips) > 1 else [],
+                output_path=enhanced_video,
+            )
+        else:
+            logger.warning("No Veo clips available, using demo as enhanced video")
+            shutil.copy(demo_normalized, enhanced_video)
+            enhanced_meta = demo_meta
+        
+        _save_debug_file(enhanced_video, "enhanced", video_doc_id)
+        
+        # ========== STAGE: voice ==========
+        current_stage = "voice"
+        logger.info("Pipeline stage=%s video_id=%s languages=%s", current_stage, video_doc_id, languages_requested)
+        update_video_status(
+            video_doc_id=video_doc_id,
+            status="running",
+            stage="voice",
+            error=None,
+            extra_fields={"enhanced_video_duration_sec": enhanced_meta["duration_sec"]},
+        )
+        
+        track_payloads: dict[str, dict[str, Any]] = {}
+        for language in languages_requested:
+            try:
+                narration_text = generate_narration_script(shot_plan=shot_plan, language=language)
+                audio_path = workspace_dir / f"narration_{language}.wav"
+                tts_result = synthesize_with_gemini_tts(
+                    text=narration_text,
+                    output_path=audio_path,
+                    language=language,
+                )
+                
+                _save_debug_file(audio_path, f"tts_narration_{language}", video_doc_id)
+                
+                # ========== STAGE: captions ==========
+                srt_text = build_srt_from_timeline(shot_plan.get("timeline", []))
+                captions_path = workspace_dir / f"captions_{language}.srt"
+                captions_path.write_text(srt_text, encoding="utf-8")
+                
+                # ========== STAGE: finalize ==========
+                mixed_video = workspace_dir / f"mixed_{language}.mp4"
+                mix_meta = mix_with_narration(enhanced_video, audio_path, mixed_video)
+                
+                _save_debug_file(mixed_video, f"mixed_{language}", video_doc_id)
+                
+                final_video_path = workspace_dir / f"final_{language}.mp4"
+                final_meta = burn_captions(mixed_video, captions_path, final_video_path)
+                
+                _save_debug_file(final_video_path, f"final_{language}", video_doc_id)
+                
+                track_payloads[language] = {
+                    "status": "completed",
+                    "error": None,
+                    "voice_script": narration_text,
+                    "duration_sec": final_meta.get("duration_sec"),
+                    "audio_path": str(audio_path),
+                    "captions_path": str(captions_path),
+                    "final_video_path": str(final_video_path),
+                    "mix_meta": mix_meta,
+                    "final_video_meta": final_meta,
+                    "voice_model": tts_result.get("model"),
+                }
+                logger.info("Track generated language=%s duration=%.2fs", language, final_meta["duration_sec"])
+            except Exception as exc:
+                logger.exception("Track generation failed language=%s", language)
+                track_payloads[language] = {
+                    "status": "failed",
+                    "error": str(exc),
+                }
+        
+        # ========== STAGE: done - Upload ==========
+        current_stage = "done"
+        update_video_status(
+            video_doc_id=video_doc_id,
+            status="running",
+            stage="uploading",
+            error=None,
+        )
+        
+        # Upload enhanced video
+        enhanced_upload = upload_file(
+            local_path=enhanced_video,
+            dest_path=f"videos/{video_doc_id}/enhanced.mp4",
+            content_type="video/mp4",
+        )
+        
+        # Upload tracks
+        tracks_final: dict[str, dict[str, Any]] = {}
+        for language, payload in track_payloads.items():
+            if payload["status"] != "completed":
+                tracks_final[language] = payload
+                continue
+            
+            audio_upload = upload_file(
+                local_path=payload["audio_path"],
+                dest_path=f"videos/{video_doc_id}/{language}/narration.wav",
+                content_type="audio/wav",
+            )
+            srt_upload = upload_file(
+                local_path=payload["captions_path"],
+                dest_path=f"videos/{video_doc_id}/{language}/captions.srt",
+                content_type="text/plain",
+            )
+            final_upload = upload_file(
+                local_path=payload["final_video_path"],
+                dest_path=f"videos/{video_doc_id}/{language}/final.mp4",
+                content_type="video/mp4",
+            )
+            
+            tracks_final[language] = {
+                "status": "completed",
+                "error": None,
+                "voice_script": payload.get("voice_script"),
+                "duration_sec": payload.get("duration_sec"),
+                "voice_provider": "gemini_tts",
+                "caption_mode": "burned_plus_srt",
+                "audio_url": audio_upload["url"],
+                "captions_url": srt_upload["url"],
+                "final_video_url": final_upload["url"],
+            }
+        
+        # Final update
+        update_video_status(
+            video_doc_id=video_doc_id,
+            status="completed",
+            stage="done",
+            error=None,
+            extra_fields={
+                "enhanced_video_url": enhanced_upload["url"],
+                "base_video_url": enhanced_upload["url"],
+                "tracks": tracks_final,
+                "script": script,
+                "shot_plan": shot_plan,
+            },
+        )
+        logger.info("Pipeline from script completed video_id=%s", video_doc_id)
+        
+    except Exception as exc:
+        logger.exception("Pipeline from script failed video_id=%s stage=%s", video_doc_id, current_stage)
+        update_video_status(
+            video_doc_id=video_doc_id,
+            status="failed",
+            stage="error",
+            error=str(exc),
+        )
+    finally:
+        with _LOCK:
+            _FUTURES.pop(video_doc_id, None)
+        shutil.rmtree(workspace_dir, ignore_errors=True)
+
+
+def enqueue_pipeline_from_script(
+    commit_id: str,
+    script: dict[str, Any],
+    shot_plan: dict[str, Any],
+    languages: list[str] | None = None,
+) -> dict[str, Any]:
+    """Queue pipeline from snapshots stage using pre-generated script.
+    
+    This is for testing - skips goal/demo/script generation and uses
+    the provided script and shot_plan with the existing demo video.
+    """
+    logger.info("Enqueue pipeline from script commit_id=%s", commit_id)
+    
+    commit_doc = get_commit_by_id(commit_id)
+    if not commit_doc:
+        raise ValueError(f"Commit not found: {commit_id}")
+    
+    if not commit_doc.get("feature_demo_video_url"):
+        raise ValueError("No demo video found. Run demo phase first.")
+    
+    languages_requested = parse_target_languages(languages)
+    video_doc_id = build_video_doc_id(commit_doc["repo_full_name"], commit_doc["sha"])
+    
+    # Create/update video doc
+    upsert_video_doc(
+        video_doc_id=video_doc_id,
+        payload={
+            "video_id": video_doc_id,
+            "commit_id": commit_doc["id"],
+            "repo_full_name": commit_doc["repo_full_name"],
+            "sha": commit_doc["sha"],
+            "sha_short": commit_doc["sha_short"],
+            "status": "queued",
+            "stage": "snapshots",
+            "error": None,
+            "languages_requested": languages_requested,
+            "script": script,
+            "shot_plan": shot_plan,
+            "updated_at": datetime.utcnow(),
+        },
+    )
+    
+    with _LOCK:
+        future = _EXECUTOR.submit(
+            _run_pipeline_from_script,
+            commit_id,
+            video_doc_id,
+            script,
+            shot_plan,
+            languages_requested,
+        )
+        _FUTURES[video_doc_id] = future
+    
+    return {
+        "queued": True,
+        "video_id": video_doc_id,
+        "commit_id": commit_id,
+        "status": "queued",
+        "stage": "snapshots",
+        "languages_requested": languages_requested,
+        "clip_prompts_count": len(shot_plan.get("clip_prompts", [])),
     }

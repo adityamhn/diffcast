@@ -202,3 +202,23 @@ export async function testStitchPhase(openerUrl, demoUrl, closingUrls = []) {
   }
   return res.json();
 }
+
+export async function runFromScript(owner, repo, sha, script, shotPlan, languages = ["en"]) {
+  const res = await fetch(`${API_URL}/api/pipeline/test/run-from-script`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      owner,
+      repo,
+      sha,
+      script,
+      shot_plan: shotPlan,
+      languages,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Run from script failed: ${res.status}`);
+  }
+  return res.json();
+}

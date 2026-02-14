@@ -347,6 +347,30 @@
   cursor: not-allowed;
 }
 
+/* Run Full Flow button (after test script) */
+.btnRunFlow {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  border: 1px solid #059669;
+  background: #059669;
+  color: #fff;
+  min-width: 120px;
+}
+
+.btnRunFlow:hover:not(:disabled) {
+  background: #047857;
+  border-color: #047857;
+}
+
+.btnRunFlow:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .testResults {
   margin-top: 20px;
   padding: 16px;

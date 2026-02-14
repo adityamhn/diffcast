@@ -580,6 +580,67 @@ def test_stitch_phase():
         return jsonify({"error": str(exc)}), 500
 
 
+@pipeline_bp.route("/pipeline/test/run-from-script", methods=["POST"])
+def test_run_from_script():
+    """TEST: Run remaining pipeline phases using a pre-generated script.
+    
+    This endpoint takes a script and shot_plan (from test/script) and runs:
+    snapshots → Veo → stitch → voice → captions → finalize
+    
+    Body:
+      {
+        "owner": "...",
+        "repo": "...",
+        "sha": "...",
+        "script": { ... },      # From test/script response
+        "shot_plan": { ... },   # From test/script response
+        "languages": ["en"]     # Optional, defaults to ["en"]
+      }
+    """
+    data = request.get_json() or {}
+    commit_doc_id = _resolve_commit_id(data)
+    if isinstance(commit_doc_id, tuple):
+        return commit_doc_id  # Error response
+    
+    script = data.get("script")
+    shot_plan = data.get("shot_plan")
+    languages = data.get("languages", ["en"])
+    
+    if not script or not shot_plan:
+        return jsonify({
+            "error": "script and shot_plan are required",
+            "hint": "First run POST /pipeline/test/script to generate these",
+            "example": {
+                "owner": "...",
+                "repo": "...", 
+                "sha": "...",
+                "script": {"title": "...", "scenes": [...]},
+                "shot_plan": {"clip_prompts": [...], "timeline": [...]},
+            },
+        }), 400
+    
+    try:
+        from services.pipeline_service import enqueue_pipeline_from_script
+        
+        result = enqueue_pipeline_from_script(
+            commit_id=commit_doc_id,
+            script=script,
+            shot_plan=shot_plan,
+            languages=languages,
+        )
+        return jsonify({
+            "ok": True,
+            "phase": "run-from-script",
+            "commit_id": commit_doc_id,
+            **result,
+        })
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Test run-from-script failed commit_id=%s", commit_doc_id)
+        return jsonify({"error": str(exc)}), 500
+
+
 def _resolve_commit_id(data: dict) -> str | tuple:
     """Helper to resolve commit_id from request data."""
     commit_doc_id = data.get("commit_id")

@@ -248,32 +248,27 @@ def mix_with_narration(
     narration_audio_path: str | Path,
     output_path: str | Path,
 ) -> dict[str, Any]:
-    """Keep base audio ambience and Veo audio, duck under narration."""
+    """Replace base video audio with narration audio."""
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    
     cmd = [
         "ffmpeg",
         "-y",
-        "-i",
-        str(base_video_path),
-        "-i",
-        str(narration_audio_path),
-        "-filter_complex",
-        "[0:a][1:a]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[ducked];"
-        "[ducked][1:a]amix=inputs=2:weights='0.7 1.0':normalize=0[aout]",
-        "-map",
-        "0:v:0",
-        "-map",
-        "[aout]",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
+        "-i", str(base_video_path),
+        "-i", str(narration_audio_path),
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-ar", "48000",
+        "-ac", "2",
+        "-b:a", "192k",
         "-shortest",
         str(out),
     ]
+    
+    logger.info("Replacing video audio with narration base=%s narration=%s output=%s", base_video_path, narration_audio_path, out)
     _run(cmd, "mix narration failed")
     return probe_video(out)
 

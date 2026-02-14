@@ -14,6 +14,7 @@ import {
   testScriptPhase,
   testSnapshotsPhase,
   testVeoPhase,
+  runFromScript,
 } from "@/lib/api";
 import { CommitChat } from "./CommitChat";
 import styles from "./CommitPageContent.module.css";
@@ -45,6 +46,7 @@ export function CommitPageContent({
   const [testingScript, setTestingScript] = useState(false);
   const [testingSnapshots, setTestingSnapshots] = useState(false);
   const [testingVeo, setTestingVeo] = useState(false);
+  const [runningFromScript, setRunningFromScript] = useState(false);
   const [testResults, setTestResults] = useState(null);
   const [showTestPanel, setShowTestPanel] = useState(false);
 
@@ -222,6 +224,30 @@ front-on view of the monitor with soft neutral studio lighting. Style: photoreal
     }
   };
 
+  const handleRunFromScript = async () => {
+    // Get script and shot_plan from test results
+    const script = testResults?.script;
+    const shotPlan = testResults?.shot_plan;
+
+    if (!script || !shotPlan) {
+      setError("No script/shot_plan available. Run 'Test Script' first.");
+      return;
+    }
+
+    setRunningFromScript(true);
+    setError(null);
+    try {
+      const res = await runFromScript(owner, repo, sha, script, shotPlan, ["en"]);
+      setTestResults({ phase: "run-from-script", ...res });
+      await fetchData();
+      router.refresh();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRunningFromScript(false);
+    }
+  };
+
   const demoStatus = commit?.feature_demo_status;
   const videoStatus = video?.status;
   const videoStage = video?.stage;
@@ -363,6 +389,21 @@ front-on view of the monitor with soft neutral studio lighting. Style: photoreal
               </button>
               <span className={styles.phaseDesc}>Generate scene script + 2 clip prompts</span>
             </div>
+
+            {testResults?.phase === "script" && (
+              <div className={styles.testPhase}>
+                <span className={styles.phaseNumber}>→</span>
+                <button
+                  type="button"
+                  onClick={handleRunFromScript}
+                  disabled={runningFromScript || isVideoRunning}
+                  className={styles.btnRunFlow}
+                >
+                  {runningFromScript || isVideoRunning ? "Running…" : "Run Remaining Flow"}
+                </button>
+                <span className={styles.phaseDesc}>Run snapshots → Veo → stitch → voice → captions using this script</span>
+              </div>
+            )}
 
             <div className={styles.testPhase}>
               <span className={styles.phaseNumber}>4</span>
