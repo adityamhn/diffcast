@@ -6,7 +6,6 @@ from typing import Optional
 
 from firebase_schema import (
     CommitDoc,
-    RepoDoc,
     WebhookEventDoc,
     commit_id,
     repo_id,

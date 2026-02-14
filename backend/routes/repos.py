@@ -1,8 +1,26 @@
 """Repo management and listing - multi-repo support."""
 
+import re
+
 from flask import Blueprint, request, jsonify
 
 from services import list_repos, list_commits, get_repo, register_repo
+
+
+def _parse_github_url(url: str) -> tuple[str, str] | None:
+    """Extract owner/repo from GitHub URL. Returns (owner, repo) or None."""
+    if not url or not url.strip():
+        return None
+    url = url.strip()
+    # Handle git@github.com:owner/repo.git
+    m = re.match(r"(?:git@|https?://)github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    if m:
+        return m.group(1), m.group(2).rstrip("/")
+    # Handle github.com/owner/repo
+    m = re.match(r"github\.com/([^/]+)/([^/]+)", url)
+    if m:
+        return m.group(1), m.group(2).rstrip("/")
+    return None
 
 repos_bp = Blueprint("repos", __name__, url_prefix="/api/repos")
 
@@ -14,6 +32,30 @@ def list_all():
     try:
         repos = list_repos()
         return jsonify({"repos": repos, "count": len(repos)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@repos_bp.route("/add", methods=["POST"])
+def add_by_url():
+    """
+    Register a repo by GitHub URL and webhook secret.
+    Body: { "repo_url": "https://github.com/owner/repo", "webhook_secret": "your-secret" }
+    """
+    data = request.get_json() or {}
+    repo_url = data.get("repo_url") or data.get("url")
+    webhook_secret = data.get("webhook_secret")
+    if not repo_url:
+        return jsonify({"error": "Missing repo_url"}), 400
+    if not webhook_secret:
+        return jsonify({"error": "Missing webhook_secret"}), 400
+    parsed = _parse_github_url(repo_url)
+    if not parsed:
+        return jsonify({"error": "Invalid GitHub URL. Use e.g. https://github.com/owner/repo"}), 400
+    owner, name = parsed
+    try:
+        result = register_repo(owner=owner, name=name, webhook_secret=webhook_secret)
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
