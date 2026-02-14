@@ -1,6 +1,28 @@
-def main():
-    print("Hello from backend!")
+"""Flask application factory."""
 
+import os
+from flask import Flask
+
+from config import config_by_name
+from routes import main_bp, api_bp
+
+
+def create_app(config_name=None):
+    """Create and configure the Flask app."""
+    app = Flask(__name__)
+
+    config_name = config_name or os.environ.get("FLASK_ENV", "default")
+    app.config.from_object(config_by_name[config_name])
+
+    # Register blueprints
+    app.register_blueprint(main_bp)
+    app.register_blueprint(api_bp)
+
+    return app
+
+
+# For `flask run` and direct execution
+app = create_app()
 
 if __name__ == "__main__":
-    main()
+    app.run(debug=True, host="0.0.0.0", port=5000)
